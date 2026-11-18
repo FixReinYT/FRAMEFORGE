@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.3.0"
+VERSION = "0.4.1"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -34,6 +34,10 @@ class FrameForge:
         self.origin, self.status = (0, 0, 1), tk.StringVar(value="Готово")
         self.undo_stack, self.redo_stack = [], []
         self.stroke_before, self.shape_start = None, None
+        self.stroke_points = []
+        self.checker_cache = None
+        self.canvas_image_id = None
+        self.preview_ids = []
         self.setup_style()
         self.build()
         self.bind_shortcuts()
@@ -105,7 +109,7 @@ class FrameForge:
         shell = tk.Frame(center, bg="#11151d", padx=10, pady=10); shell.pack(fill="both", expand=True, pady=(5, 0))
         self.canvas = tk.Canvas(shell, bg="#171c25", highlightthickness=0, cursor="crosshair")
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda e: self.render())
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind("<Button-1>", self.start)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.release)
@@ -151,16 +155,27 @@ class FrameForge:
         c = colorchooser.askcolor(self.color, title="Цвет кисти")[1]
         if c: self.color = c; self.swatch.config(bg=c)
 
-    def snapshot(self):
-        self.undo_stack.append((self.index, [im.copy() for im in self.frames]))
+    def snapshot(self, all_frames=False):
+        # A paint stroke only snapshots its active frame, not every frame in the project.
+        if all_frames:
+            state = ("all", self.index, [im.copy() for im in self.frames])
+        else:
+            state = ("frame", self.index, self.frames[self.index].copy())
+        self.undo_stack.append(state)
         if len(self.undo_stack) > 40: self.undo_stack.pop(0)
         self.redo_stack.clear()
 
     def restore(self, stack_from, stack_to):
         if not stack_from: return
-        stack_to.append((self.index, [im.copy() for im in self.frames]))
-        self.index, self.frames = stack_from.pop()
-        self.index = min(self.index, len(self.frames)-1)
+        current = ("all", self.index, [im.copy() for im in self.frames])
+        state = stack_from.pop()
+        stack_to.append(current)
+        kind, idx, payload = state
+        if kind == "all":
+            self.index, self.frames = idx, payload
+        else:
+            self.index = min(idx, len(self.frames)-1)
+            self.frames[self.index] = payload
         self.refresh(); self.render(); self.status.set("История действий обновлена")
 
     def undo(self): self.restore(self.undo_stack, self.redo_stack)
@@ -171,21 +186,34 @@ class FrameForge:
         scale = min((cw-30)/self.w, (ch-30)/self.h)
         return scale, (cw-self.w*scale)/2, (ch-self.h*scale)/2
 
+    def on_canvas_resize(self, event=None):
+        self.checker_cache = None
+        self.render()
+
     def render(self):
         if not hasattr(self, "canvas"): return
         self.canvas.delete("all")
+        self.preview_ids = []
         s,x,y = self.geometry(); ww,hh = max(1,int(self.w*s)),max(1,int(self.h*s))
-        tile=max(8,int(16*s))
-        for yy in range(0,hh,tile):
-            for xx in range(0,ww,tile):
-                c="#dce1e8" if ((xx//tile)+(yy//tile))%2==0 else "#c7ced8"
-                self.canvas.create_rectangle(x+xx,y+yy,x+min(ww,xx+tile),y+min(hh,yy+tile),fill=c,outline=c)
+        # Cache the checkerboard: do not create hundreds of Tk rectangles per redraw.
+        if self.checker_cache is None or self.checker_cache.size != (ww,hh):
+            tile=max(8,int(16*s))
+            checker=Image.new("RGB",(ww,hh),"#c7ced8")
+            cd=ImageDraw.Draw(checker)
+            for yy in range(0,hh,tile):
+                for xx in range(0,ww,tile):
+                    if ((xx//tile)+(yy//tile))%2==0:
+                        cd.rectangle((xx,yy,min(ww-1,xx+tile-1),min(hh-1,yy+tile-1)),fill="#dce1e8")
+            self.checker_cache=checker
+        base=self.checker_cache.convert("RGBA")
         im=self.frames[self.index].copy()
         if self.onion.get() and self.index>0:
             prev=self.frames[self.index-1]
-            tint=Image.new("RGBA",prev.size,(255,75,95,0)); tint.putalpha(prev.getchannel("A").point(lambda a:int(a*.22)))
+            tint=Image.new("RGBA",prev.size,(255,75,95,0))
+            tint.putalpha(prev.getchannel("A").point(lambda a:int(a*.22)))
             tint.alpha_composite(im); im=tint
-        self.photo=ImageTk.PhotoImage(im.resize((ww,hh),Image.Resampling.LANCZOS))
+        base.alpha_composite(im.resize((ww,hh),Image.Resampling.BILINEAR))
+        self.photo=ImageTk.PhotoImage(base.convert("RGB"))
         self.canvas.create_image(x,y,image=self.photo,anchor="nw")
         self.canvas.create_rectangle(x,y,x+ww,y+hh,outline="#718096")
         self.origin=(x,y,s)
@@ -202,47 +230,78 @@ class FrameForge:
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
         if tool=="eyedropper":
-            c=self.frames[self.index].getpixel(p)
-            if c[3]: self.color="#%02x%02x%02x"%c[:3]; self.swatch.config(bg=self.color)
+            col=self.frames[self.index].getpixel(p)
+            if col[3]: self.color="#%02x%02x%02x"%col[:3]; self.swatch.config(bg=self.color)
             return
         if tool=="fill":
-            self.snapshot(); ImageDraw.floodfill(self.frames[self.index],p,self.rgba(),thresh=20); self.render(); return
-        self.snapshot(); self.stroke_before=self.frames[self.index].copy()
-        self.last=p; self.shape_start=p
-        if tool in ("pencil","brush","airbrush","eraser"): self.paint_segment(p,p)
-        self.render()
+            self.snapshot()
+            ImageDraw.floodfill(self.frames[self.index],p,self.rgba(),thresh=20)
+            self.render(); return
+        self.snapshot()
+        self.last=p; self.shape_start=p; self.stroke_points=[p]
+        # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
+        cx,cy=self.to_canvas(p)
+        self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
+        if tool in ("line","rect","ellipse"):
+            self.preview_ids=[]
+        self.status.set("Рисование...")
 
-    def paint_segment(self,a,b):
-        tool=self.tool.get(); im=self.frames[self.index]
-        size=max(1,self.size.get()); color=(0,0,0,0) if tool=="eraser" else self.rgba()
-        d=ImageDraw.Draw(im)
-        if tool=="airbrush":
-            layer=Image.new("RGBA",im.size,(0,0,0,0)); ld=ImageDraw.Draw(layer)
-            r=max(1,size//2)
-            for k in range(4,0,-1):
-                rr=max(1,int(r*k/4)); ld.ellipse((b[0]-rr,b[1]-rr,b[0]+rr,b[1]+rr),fill=(*self.rgba()[:3],int(self.rgba()[3]/4)))
-            im.alpha_composite(layer)
-        else:
-            d.line([a,b],fill=color,width=1 if tool=="pencil" else size)
-            r=0 if tool=="pencil" else size/2
-            d.ellipse((b[0]-r,b[1]-r,b[0]+r,b[1]+r),fill=color)
+    def to_canvas(self,p):
+        x,y,s=self.origin
+        return x+p[0]*s, y+p[1]*s
 
     def drag(self,e):
         if self.last is None or self.playing:return
         p=self.coords(e); tool=self.tool.get()
+        a=self.to_canvas(self.last); b=self.to_canvas(p)
         if tool in ("pencil","brush","airbrush","eraser"):
-            self.paint_segment(self.last,p); self.last=p; self.render()
+            color="#171c25" if tool=="eraser" else self.color
+            width=max(1,int(self.size.get()*self.origin[2]))
+            item=self.canvas.create_line(*a,*b,fill=color,width=width,
+                                         capstyle=tk.ROUND,joinstyle=tk.ROUND)
+            self.preview_ids.append(item)
         elif tool in ("line","rect","ellipse"):
-            self.frames[self.index]=self.stroke_before.copy()
-            d=ImageDraw.Draw(self.frames[self.index]); c=self.rgba(); width=max(1,self.size.get())
-            if tool=="line": d.line([self.shape_start,p],fill=c,width=width)
-            elif tool=="rect": d.rectangle([self.shape_start,p],outline=c,width=width)
-            else: d.ellipse([self.shape_start,p],outline=c,width=width)
-            self.render()
+            for item in self.preview_ids:self.canvas.delete(item)
+            self.preview_ids=[]
+            a=self.to_canvas(self.shape_start)
+            if tool=="line":
+                item=self.canvas.create_line(*a,*b,fill=self.color,width=max(1,int(self.size.get()*self.origin[2])))
+            elif tool=="rect":
+                item=self.canvas.create_rectangle(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
+            else:
+                item=self.canvas.create_oval(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
+            self.preview_ids=[item]
+        self.stroke_points.append(p)
+        self.last=p
 
     def release(self,e):
-        if self.last is not None:
-            self.last=None; self.render(); self.status.set("Изменения внесены")
+        if self.last is None:return
+        p=self.coords(e); tool=self.tool.get()
+        points=self.stroke_points or [p]
+        im=self.frames[self.index]
+        color=(0,0,0,0) if tool=="eraser" else self.rgba()
+        d=ImageDraw.Draw(im)
+        width=max(1,self.size.get())
+        if tool in ("pencil","brush","eraser","airbrush"):
+            # Commit the collected path once, instead of repainting/resampling the canvas on each event.
+            if len(points)==1:
+                q=points[0]; r=0 if tool=="pencil" else width/2
+                d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
+            else:
+                d.line(points,fill=color,width=1 if tool=="pencil" else width,joint="curve")
+                if tool!="pencil":
+                    r=width/2
+                    for q in (points[0],points[-1]):
+                        d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
+        elif tool in ("line","rect","ellipse"):
+            a=self.shape_start
+            if tool=="line":d.line([a,p],fill=color,width=width)
+            elif tool=="rect":d.rectangle([a,p],outline=color,width=width)
+            else:d.ellipse([a,p],outline=color,width=width)
+        for item in self.preview_ids:self.canvas.delete(item)
+        self.preview_ids=[]; self.last=None; self.stroke_points=[]
+        self.render()
+        self.status.set("Изменения внесены")
 
     def refresh(self):
         for w in self.timeline.winfo_children(): w.destroy()
@@ -258,9 +317,9 @@ class FrameForge:
         self.index=max(0,min(len(self.frames)-1,n)); self.refresh(); self.render()
 
     def add(self):
-        self.snapshot(); self.frames.insert(self.index+1,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.select(self.index+1)
+        self.snapshot(all_frames=True); self.frames.insert(self.index+1,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.select(self.index+1)
     def duplicate(self):
-        self.snapshot(); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.select(self.index+1)
+        self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.select(self.index+1)
     def delete(self):
         self.snapshot()
         if len(self.frames)==1:self.frames[0]=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
@@ -308,7 +367,7 @@ class FrameForge:
         cfg=self.choose_canvas()
         if not cfg:return
         self.w,self.h=cfg["w"],cfg["h"]
-        self.snapshot(); self.frames=[Image.new("RGBA",(self.w,self.h),cfg["bg"])]
+        self.snapshot(all_frames=True); self.frames=[Image.new("RGBA",(self.w,self.h),cfg["bg"])]
         self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear()
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         self.status.set("Создан новый холст")
