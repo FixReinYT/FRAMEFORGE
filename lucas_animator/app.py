@@ -1,9 +1,9 @@
-import json, os, sys, tkinter as tk, zipfile
+import json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -23,6 +23,7 @@ class FrameForge:
         self.root = root
         self.root.title(f"{APP_NAME} {VERSION}")
         self.root.geometry("1500x920")
+        self.root.protocol("WM_DELETE_WINDOW", self.return_to_menu)
         self.root.minsize(900, 600)
         self.root.resizable(True, True)
         self.w, self.h = 1280, 720
@@ -91,7 +92,8 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.7.1", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.8.0", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
             ttk.Button(header, text=label, command=fn).pack(side="left", padx=4, pady=12)
@@ -737,9 +739,43 @@ class FrameForge:
     def export_menu(self):
         win=tk.Toplevel(self.root); win.title("Экспорт"); win.configure(bg=PANEL); win.resizable(False,False)
         tk.Label(win,text="Экспорт проекта",bg=PANEL,fg=TEXT,font=("Segoe UI",13,"bold")).pack(padx=25,pady=12)
-        for label,fn in [("Текущий кадр — PNG",self.png),("Анимация — GIF",self.gif),
+        for label,fn in [("Видео MP4 — H.264",self.export_mp4),("Видео WebM — VP9",self.export_webm),("Текущий кадр — PNG",self.png),("Анимация — GIF",self.gif),
                          ("Последовательность PNG — ZIP",self.png_sequence),("Sprite Sheet — PNG",self.sprite_sheet)]:
             ttk.Button(win,text=label,command=lambda f=fn:(win.destroy(),f())).pack(fill="x",padx=18,pady=4)
+
+    def export_video(self, extension, codec, extra_args):
+        path=filedialog.asksaveasfilename(defaultextension="."+extension,filetypes=[(extension.upper()+" video","*."+extension)])
+        if not path:return
+        try:
+            import imageio_ffmpeg
+            ffmpeg=imageio_ffmpeg.get_ffmpeg_exe()
+            width=self.w+(self.w%2); height=self.h+(self.h%2)
+            fps=max(1,int(self.fps.get()))
+            cmd=[ffmpeg,"-y","-f","rawvideo","-vcodec","rawvideo","-s",f"{width}x{height}","-pix_fmt","rgb24","-r",str(fps),"-i","-","-an","-c:v",codec]
+            cmd.extend(extra_args); cmd.extend(["-pix_fmt","yuv420p",path])
+            proc=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+            for frame in self.frames:
+                rgb=Image.new("RGB",(width,height),(255,255,255))
+                rgba=frame.convert("RGBA"); rgb.paste(rgba,mask=rgba.getchannel("A"))
+                proc.stdin.write(rgb.tobytes())
+            proc.stdin.close()
+            error=proc.stderr.read().decode("utf-8","replace"); code=proc.wait()
+            if code:raise RuntimeError(error[-1800:] or "FFmpeg завершился с ошибкой")
+            self.status.set("Видео экспортировано: "+os.path.basename(path))
+            messagebox.showinfo(APP_NAME,"Видео успешно экспортировано.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\n"+str(exc))
+
+    def export_mp4(self):
+        self.export_video("mp4","libx264",["-crf","18","-movflags","+faststart"])
+
+    def export_webm(self):
+        self.export_video("webm","libvpx-vp9",["-crf","30","-b:v","0"])
+
+    def return_to_menu(self):
+        self.playing=False
+        for widget in self.root.winfo_children():widget.destroy()
+        MainMenu(self.root)
 
     def png(self):
         p=filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG","*.png")])
@@ -766,6 +802,90 @@ class FrameForge:
         p=filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG","*.png")])
         if p:sheet.save(p)
 
+
+class MainMenu:
+    def __init__(self,root):
+        self.root=root
+        root.title(f"{APP_NAME} {VERSION} — главное меню")
+        root.geometry("1040x700");root.minsize(820,580);root.configure(bg="#11131d")
+        try:
+            base=getattr(sys,"_MEIPASS",os.path.dirname(os.path.abspath(__file__)))
+            self.icon=tk.PhotoImage(file=os.path.join(base,"assets","frameforge_icon.png"));root.iconphoto(True,self.icon)
+        except Exception:self.icon=None
+        self.settings_path=os.path.join(os.getenv("APPDATA",os.path.expanduser("~")),"FRAMEFORGE","settings.json")
+        self.settings=self.load_settings();self.build()
+
+    def load_settings(self):
+        try:
+            with open(self.settings_path,encoding="utf-8") as f:return json.load(f)
+        except Exception:return {"default_fps":12,"onion_skin":True,"autosave":True,"preview_quality":"balanced","recent":[]}
+
+    def save_settings(self):
+        os.makedirs(os.path.dirname(self.settings_path),exist_ok=True)
+        with open(self.settings_path,"w",encoding="utf-8") as f:json.dump(self.settings,f,ensure_ascii=False,indent=2)
+
+    def build(self):
+        c=tk.Canvas(self.root,bg="#11131d",highlightthickness=0);c.pack(fill="both",expand=True)
+        c.create_oval(650,-180,1220,390,fill="#1b2440",outline="")
+        c.create_oval(760,-100,1160,300,outline="#354c78",width=2)
+        c.create_text(70,58,text="FRAMEFORGE",anchor="w",fill="#f0f3fa",font=("Segoe UI",30,"bold"))
+        c.create_text(73,100,text="DRAW  •  ANIMATE  •  CREATE",anchor="w",fill="#72aaff",font=("Segoe UI",10,"bold"))
+        c.create_text(75,165,text="Творческая мастерская 2D-анимации",anchor="w",fill="#e8edf5",font=("Segoe UI",21,"bold"))
+        c.create_text(75,202,text="Создавай кадр за кадром. Твоя история начинается здесь.",anchor="w",fill="#9aa8bb",font=("Segoe UI",11))
+        self.button(c,75,255,390,316,"＋   Новый проект",self.new_project,True)
+        self.button(c,75,330,390,391,"▣   Открыть проект .FFG",self.open_project)
+        self.button(c,75,405,390,466,"⚙   Настройки",self.preferences)
+        self.button(c,75,480,390,541,"ⓘ   Авторы и о программе",self.about)
+        c.create_text(75,610,text="ПОСЛЕДНИЕ ПРОЕКТЫ",anchor="w",fill="#72aaff",font=("Segoe UI",10,"bold"))
+        recent=self.settings.get("recent",[])
+        if recent:
+            for i,p in enumerate(recent[:3]):c.create_text(75,642+i*19,text=os.path.basename(p),anchor="w",fill="#c6d0df",font=("Segoe UI",9))
+        else:c.create_text(75,642,text="Здесь будут отображаться недавно открытые проекты",anchor="w",fill="#718096",font=("Segoe UI",9))
+        c.create_text(960,655,text=f"Версия {VERSION}   •   TheLucassDen",anchor="e",fill="#718096",font=("Segoe UI",9))
+
+    def button(self,c,x1,y1,x2,y2,label,command,primary=False):
+        bg="#315f9d" if primary else "#202838"
+        rect=c.create_rectangle(x1,y1,x2,y2,fill=bg,outline="#4b6d9d" if primary else "#354052",width=1)
+        txt=c.create_text(x1+20,(y1+y2)/2,text=label,anchor="w",fill="#ffffff",font=("Segoe UI",12,"bold"))
+        for item in (rect,txt):c.tag_bind(item,"<Button-1>",lambda e,fn=command:fn())
+
+    def new_project(self):
+        for w in self.root.winfo_children():w.destroy()
+        FrameForge(self.root)
+
+    def open_project(self,path=None):
+        if path is None:path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg")])
+        if not path:return
+        for w in self.root.winfo_children():w.destroy()
+        app=FrameForge(self.root);app.open(path)
+        self.settings["recent"]=[path]+[p for p in self.settings.get("recent",[]) if p!=path]
+        self.settings["recent"]=self.settings["recent"][:8];self.save_settings()
+
+    def preferences(self):
+        win=tk.Toplevel(self.root);win.title("Настройки FRAMEFORGE");win.configure(bg=PANEL);win.resizable(False,False);win.transient(self.root);win.grab_set()
+        tk.Label(win,text="Настройки программы",bg=PANEL,fg=TEXT,font=("Segoe UI",17,"bold")).pack(anchor="w",padx=20,pady=(18,10))
+        body=tk.Frame(win,bg=PANEL);body.pack(fill="both",padx=20,pady=8)
+        fps=tk.IntVar(value=int(self.settings.get("default_fps",12)))
+        onion=tk.BooleanVar(value=bool(self.settings.get("onion_skin",True)))
+        autosave=tk.BooleanVar(value=bool(self.settings.get("autosave",True)))
+        quality=tk.StringVar(value=self.settings.get("preview_quality","balanced"))
+        tk.Label(body,text="FPS по умолчанию",bg=PANEL,fg=TEXT).grid(row=0,column=0,sticky="w",pady=8)
+        ttk.Spinbox(body,from_=1,to=60,textvariable=fps,width=8).grid(row=0,column=1,padx=12)
+        ttk.Checkbutton(body,text="Включать Onion Skin",variable=onion).grid(row=1,column=0,columnspan=2,sticky="w",pady=7)
+        ttk.Checkbutton(body,text="Напоминать о сохранении",variable=autosave).grid(row=2,column=0,columnspan=2,sticky="w",pady=7)
+        tk.Label(body,text="Качество предпросмотра",bg=PANEL,fg=TEXT).grid(row=3,column=0,sticky="w",pady=8)
+        ttk.Combobox(body,textvariable=quality,values=["fast","balanced","high"],state="readonly",width=12).grid(row=3,column=1,padx=12)
+        tk.Label(body,text="Поддержка пера и давления планшета запланирована отдельным модулем после тестирования устройств.",bg=PANEL,fg=MUTED,wraplength=440,justify="left").grid(row=4,column=0,columnspan=2,sticky="w",pady=12)
+        def save():
+            self.settings.update(default_fps=max(1,min(60,fps.get())),onion_skin=onion.get(),autosave=autosave.get(),preview_quality=quality.get())
+            self.save_settings();win.destroy()
+        ttk.Button(win,text="Сохранить настройки",style="Accent.TButton",command=save).pack(fill="x",padx=20,pady=(5,18))
+
+    def about(self):
+        win=tk.Toplevel(self.root);win.title("Авторы и о программе");win.configure(bg=PANEL);win.resizable(False,False)
+        tk.Label(win,text="FRAMEFORGE",bg=PANEL,fg=TEXT,font=("Segoe UI",23,"bold")).pack(padx=35,pady=(25,5))
+        tk.Label(win,text=f"Версия {VERSION}\\n\\nРедактор рисования и покадровой 2D-анимации.\\n\\nАвтор и разработчик: TheLucassDen\\n\\nСоздано для художников, аниматоров и авторов независимых проектов.",bg=PANEL,fg=TEXT,justify="center",font=("Segoe UI",11)).pack(padx=35,pady=12)
+        ttk.Button(win,text="Закрыть",command=win.destroy).pack(pady=(5,20))
 
 class FrameForgeSplash:
     """Visible startup screen hosted by the root window (not a hidden-root Toplevel)."""
@@ -826,9 +946,10 @@ class FrameForgeSplash:
     def finish(self):
         for widget in self.root.winfo_children():
             widget.destroy()
-        app=FrameForge(self.root)
         if len(sys.argv)>1 and os.path.isfile(sys.argv[1]):
-            self.root.after(150,lambda:app.open(sys.argv[1]))
+            MainMenu(self.root).open_project(sys.argv[1])
+        else:
+            MainMenu(self.root)
 
 
 def register_project_association():
