@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -85,7 +85,7 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.5.1", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.6.0", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
             ttk.Button(header, text=label, command=fn).pack(side="left", padx=4, pady=12)
@@ -474,24 +474,44 @@ class FrameForge:
     def save(self):
         path=self.project or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
         if not path:return
-        folder=path+".frames"; os.makedirs(folder,exist_ok=True); names=[]
-        for i,im in enumerate(self.frames):
-            name=f"frame_{i:05d}.png"; im.save(os.path.join(folder,name)); names.append(name)
-        with open(path,"w",encoding="utf-8") as f: json.dump({"version":VERSION,"width":self.w,"height":self.h,"fps":self.fps.get(),"folder":os.path.basename(folder),"frames":names},f,indent=2)
-        self.project=path; self.status.set("Проект сохранён"); messagebox.showinfo(APP_NAME,"Проект сохранён.")
+        import io
+        manifest={"format":"FRAMEFORGE","version":VERSION,"width":self.w,"height":self.h,"fps":self.fps.get(),"frames":[]}
+        try:
+            with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as archive:
+                for i,im in enumerate(self.frames):
+                    name=f"frames/frame_{i:05d}.png"
+                    buf=io.BytesIO(); im.save(buf,format="PNG")
+                    archive.writestr(name,buf.getvalue())
+                    manifest["frames"].append(name)
+                archive.writestr("project.json",json.dumps(manifest,ensure_ascii=False,indent=2))
+            self.project=path
+            self.status.set("Проект сохранён в одном файле")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME,f"Не удалось сохранить проект: {exc}")
 
     def open(self):
-        path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg")])
+        path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg"),("Legacy project","*.json")])
         if not path:return
         try:
-            with open(path,encoding="utf-8") as f:data=json.load(f)
-            folder=os.path.join(os.path.dirname(path),data["folder"])
-            self.frames=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
-            self.w,self.h=data["width"],data["height"]; self.fps.set(data.get("fps",12)); self.index=0; self.project=path
+            import io
+            if zipfile.is_zipfile(path):
+                with zipfile.ZipFile(path,"r") as archive:
+                    data=json.loads(archive.read("project.json").decode("utf-8"))
+                    loaded=[Image.open(io.BytesIO(archive.read(name))).convert("RGBA") for name in data["frames"]]
+            else:
+                with open(path,encoding="utf-8") as f:data=json.load(f)
+                folder=os.path.join(os.path.dirname(path),data["folder"])
+                loaded=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
+            self.frames=loaded
+            self.w,self.h=data["width"],data["height"]
+            self.fps.set(data.get("fps",12)); self.index=0; self.project=path
             self.zoom=1.0; self.pan_x=0; self.pan_y=0
             self.undo_stack.clear(); self.redo_stack.clear()
-            self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
-        except Exception as e: messagebox.showerror(APP_NAME,str(e))
+            self.canvas_info.config(text=f"{self.w} × {self.h}")
+            self.refresh(); self.render()
+            self.status.set("Проект загружен")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME,f"Не удалось открыть проект: {exc}")
 
     def export_menu(self):
         win=tk.Toplevel(self.root); win.title("Экспорт"); win.configure(bg=PANEL); win.resizable(False,False)
