@@ -826,7 +826,9 @@ class FrameForgeSplash:
     def finish(self):
         for widget in self.root.winfo_children():
             widget.destroy()
-        FrameForge(self.root)
+        app=FrameForge(self.root)
+        if len(sys.argv)>1 and os.path.isfile(sys.argv[1]):
+            self.root.after(150,lambda:app.open(sys.argv[1]))
 
 
 def register_project_association():
