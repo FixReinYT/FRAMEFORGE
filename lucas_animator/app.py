@@ -114,15 +114,22 @@ class FrameForge:
         self.swatch = tk.Button(row, bg=self.color, width=5, relief="flat", command=self.pick)
         self.swatch.pack(side="right", ipady=6)
         self.section(left, "Палитра")
-        palette = ["#000000","#ffffff","#808080","#c0c0c0","#ff0000","#ff7f00","#ffff00","#7fff00",
-                   "#00ff00","#00ffff","#007fff","#0000ff","#7f00ff","#ff00ff","#ff69b4","#8b4513",
-                   "#f4cccc","#fce5cd","#fff2cc","#d9ead3","#d0e0e3","#c9daf8","#d9d2e9","#ead1dc"]
+        palette = ["#111318","#343941","#626a76","#9ba3af","#dce1e8","#ffffff",
+                   "#5b2028","#a8323e","#e14b59","#ff8290","#f5b4ba","#fce4e6",
+                   "#64351d","#a85b2b","#d88945","#f2b66d","#f6d7a8","#fff0d8",
+                   "#66501c","#a58a2b","#d6bd45","#f1dc75","#f7edb2","#fff9dc",
+                   "#24523b","#347b55","#4ca879","#82c99c","#b7e4c7","#e3f5e9",
+                   "#1d5260","#287f91","#42b5c9","#83d4df","#bcebf0","#e7f8fa",
+                   "#263c70","#365da6","#5884d8","#8eafea","#c3d4f5","#eaf0fc",
+                   "#49316f","#704ca5","#966bd0","#bd9ce8","#d9c5f3","#f1eafa",
+                   "#7b315d","#b34d87","#dc78b0","#eda4cc","#f5cce1","#fceaf3"]
         pal = tk.Frame(left, bg=PANEL); pal.pack(fill="x", padx=9, pady=3)
         for i, col in enumerate(palette):
-            b=tk.Button(pal,bg=col,width=2,height=1,relief="flat",bd=1,
-                        command=lambda value=col:self.set_color(value))
+            b=tk.Button(pal,bg=col,width=1,height=1,relief="flat",bd=0,
+                        activebackground=col,command=lambda value=col:self.set_color(value))
             b.grid(row=i//6,column=i%6,padx=2,pady=2,sticky="nsew")
         for col in range(6): pal.grid_columnconfigure(col,weight=1)
+        ttk.Button(left,text="Выбрать цвет…",command=self.pick).pack(fill="x",padx=10,pady=3)
         tk.Label(left, text="Размер кисти", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12, pady=(8, 0))
         self.size_label = tk.Label(left, text="8 px", bg=PANEL, fg=TEXT); self.size_label.pack(anchor="e", padx=12)
         ttk.Scale(left, from_=1, to=100, variable=self.size, command=self.size_changed).pack(fill="x", padx=12)
@@ -167,6 +174,7 @@ class FrameForge:
         ttk.Button(layerbar,text="−",width=3,command=self.delete_layer).pack(side="left",expand=True,fill="x",padx=1)
         ttk.Button(layerbar,text="↑",width=3,command=lambda:self.move_layer(-1)).pack(side="left",expand=True,fill="x",padx=1)
         ttk.Button(layerbar,text="↓",width=3,command=lambda:self.move_layer(1)).pack(side="left",expand=True,fill="x",padx=1)
+        ttk.Button(layerbar,text="◉",width=3,command=self.toggle_layer_visibility).pack(side="left",expand=True,fill="x",padx=1)
         self.layer_list=tk.Listbox(right,height=7,bg=ALT,fg=TEXT,selectbackground="#365a83",relief="flat",highlightthickness=0,exportselection=False)
         self.layer_list.pack(fill="x",padx=9,pady=5)
         self.layer_list.bind("<<ListboxSelect>>",self.select_layer)
@@ -227,6 +235,11 @@ class FrameForge:
     def select_layer(self,event=None):
         selection=self.layer_list.curselection()
         if selection: self.active_layer=selection[0]
+
+    def toggle_layer_visibility(self):
+        layer=self.layer_frames[self.index][self.active_layer]
+        layer["visible"]=not layer["visible"]
+        self.compose_frame(self.index); self.refresh_layers(); self.render()
 
     def add_layer(self):
         self.layer_frames[self.index].append({"name":f"Слой {len(self.layer_frames[self.index])+1}","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True})
@@ -313,25 +326,29 @@ class FrameForge:
     def snapshot(self, all_frames=False):
         # A paint stroke only snapshots its active frame, not every frame in the project.
         if all_frames:
-            state = ("all", self.index, [im.copy() for im in self.frames])
+            layers=[[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in frame] for frame in self.layer_frames]
+            state=("all",self.index,layers)
         else:
-            state = ("frame", self.index, self.frames[self.index].copy())
+            layers=[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]
+            state=("frame",self.index,layers)
         self.undo_stack.append(state)
         if len(self.undo_stack) > 40: self.undo_stack.pop(0)
         self.redo_stack.clear()
 
     def restore(self, stack_from, stack_to):
         if not stack_from: return
-        current = ("all", self.index, [im.copy() for im in self.frames])
+        current=("all",self.index,[[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in frame] for frame in self.layer_frames])
         state = stack_from.pop()
         stack_to.append(current)
         kind, idx, payload = state
-        if kind == "all":
-            self.index, self.frames = idx, payload
+        if kind=="all":
+            self.index,self.layer_frames=idx,payload
+            self.frames=[self.compose_frame(i) for i in range(len(self.layer_frames))]
         else:
-            self.index = min(idx, len(self.frames)-1)
-            self.frames[self.index] = payload
-        self.refresh(); self.render(); self.status.set("История действий обновлена")
+            self.index=min(idx,len(self.layer_frames)-1)
+            self.layer_frames[self.index]=payload
+            self.compose_frame(self.index)
+        self.refresh(); self.refresh_layers(); self.render(); self.status.set("История действий обновлена")
 
     def undo(self): self.restore(self.undo_stack, self.redo_stack)
     def redo(self): self.restore(self.redo_stack, self.undo_stack)
@@ -534,7 +551,7 @@ class FrameForge:
         self.snapshot(all_frames=True); self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[self.compose_frame(0)]
         self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear()
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
-        self.status.set("Создан новый холст")
+        self.refresh_layers(); self.status.set("Создан новый холст")
 
     def save(self):
         path=self.project or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
