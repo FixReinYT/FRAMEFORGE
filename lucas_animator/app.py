@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -23,7 +23,7 @@ class FrameForge:
         self.root = root
         self.root.title(f"{APP_NAME} {VERSION}")
         self.root.geometry("1500x920")
-        self.root.protocol("WM_DELETE_WINDOW", self.return_to_menu)
+        self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
         self.root.minsize(900, 600)
         self.root.resizable(True, True)
         self.w, self.h = 1280, 720
@@ -96,7 +96,7 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.8.0", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.8.1", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
         ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
@@ -107,11 +107,30 @@ class FrameForge:
         tk.Label(header, text="2D ANIMATION WORKSPACE", bg="#11151d", fg="#718096").pack(side="right", padx=16)
 
         work = tk.Frame(self.root, bg=BG); work.pack(fill="both", expand=True, padx=9, pady=8)
-        left = self.panel(work, 190); left.pack(side="left", fill="y")
+        left_outer = self.panel(work, 210); left_outer.pack(side="left", fill="y")
+        left_outer.pack_propagate(False)
+        left_canvas = tk.Canvas(left_outer,bg=PANEL,highlightthickness=0,width=190)
+        left_scroll = ttk.Scrollbar(left_outer,orient="vertical",command=left_canvas.yview)
+        left_canvas.configure(yscrollcommand=left_scroll.set)
+        left_scroll.pack(side="right",fill="y")
+        left_canvas.pack(side="left",fill="both",expand=True)
+        left = tk.Frame(left_canvas,bg=PANEL)
+        left_window = left_canvas.create_window((0,0),window=left,anchor="nw")
+        def _sync_left_scroll(_event=None):
+            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
+            left_canvas.itemconfigure(left_window,width=left_canvas.winfo_width())
+        left.bind("<Configure>",_sync_left_scroll)
+        left_canvas.bind("<Configure>",_sync_left_scroll)
+        def _left_wheel(event):
+            left_canvas.yview_scroll(int(-1*(event.delta/120)),"units")
+            return "break"
+        left_canvas.bind("<MouseWheel>",_left_wheel)
+        left_canvas.bind("<Button-4>",lambda e:left_canvas.yview_scroll(-1,"units"))
+        left_canvas.bind("<Button-5>",lambda e:left_canvas.yview_scroll(1,"units"))
         self.section(left, "Инструменты")
         tools = [("✎ Карандаш","pencil"),("● Кисть","brush"),("◌ Аэрограф","airbrush"),
                  ("▱ Ластик","eraser"),("／ Линия","line"),("□ Прямоуг.","rect"),
-                 ("○ Эллипс","ellipse"),("△ Треугол.","triangle"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
+                 ("○ Эллипс","ellipse"),("▰ Прямоуг. заливка","filled_rect"),("● Эллипс заливка","filled_ellipse"),("△ Треугол.","triangle"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
         toolgrid=tk.Frame(left,bg=PANEL); toolgrid.pack(fill="x",padx=6)
         self.tool_buttons={}
         for n,(label,value) in enumerate(tools):
@@ -241,6 +260,8 @@ class FrameForge:
         elif name=="rect": canvas.create_rectangle(7,6,31,26,outline=fg,width=2)
         elif name=="ellipse": canvas.create_oval(7,5,31,27,outline=fg,width=2)
         elif name=="triangle": canvas.create_polygon(19,5,32,27,6,27,outline=fg,fill="",width=2)
+        elif name=="filled_rect": canvas.create_rectangle(7,6,31,26,outline=accent,fill=accent,width=1)
+        elif name=="filled_ellipse": canvas.create_oval(7,5,31,27,outline=accent,fill=accent,width=1)
         elif name=="fill":
             canvas.create_polygon(8,17,18,6,29,17,18,28,fill="#72b7ff",outline=fg,width=1)
             canvas.create_arc(19,18,31,30,start=180,extent=180,outline=accent,width=2)
@@ -538,7 +559,7 @@ class FrameForge:
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
         cx,cy=self.to_canvas(p)
         self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
-        if tool in ("line","rect","ellipse","triangle"):
+        if tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
             self.preview_ids=[]
         self.status.set("Рисование...")
 
@@ -556,7 +577,7 @@ class FrameForge:
             item=self.canvas.create_line(*a,*b,fill=color,width=width,
                                          capstyle=tk.ROUND,joinstyle=tk.ROUND)
             self.preview_ids.append(item)
-        elif tool in ("line","rect","ellipse","triangle"):
+        elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
             for item in self.preview_ids:self.canvas.delete(item)
             self.preview_ids=[]
             a=self.to_canvas(self.shape_start)
@@ -567,6 +588,8 @@ class FrameForge:
             elif tool=="triangle":
                 mid=(a[0]+b[0])/2
                 item=self.canvas.create_polygon(mid,a[1],b[0],b[1],a[0],b[1],outline=self.color,fill="",width=max(1,int(self.size.get()*self.origin[2])))
+            elif tool=="filled_rect": item=self.canvas.create_rectangle(*a,*b,outline=self.color,fill=self.color)
+            elif tool=="filled_ellipse": item=self.canvas.create_oval(*a,*b,outline=self.color,fill=self.color)
             else:
                 item=self.canvas.create_oval(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
             self.preview_ids=[item]
@@ -599,6 +622,8 @@ class FrameForge:
             elif tool=="triangle":
                 mid=(a[0]+p[0])//2
                 d.line([(mid,a[1]),p,(a[0],p[1]),(mid,a[1])],fill=color,width=width)
+            elif tool=="filled_rect":d.rectangle([a,p],fill=color)
+            elif tool=="filled_ellipse":d.ellipse([a,p],fill=color)
             else:d.ellipse([a,p],outline=color,width=width)
         for item in self.preview_ids:self.canvas.delete(item)
         self.preview_ids=[]; self.last=None; self.stroke_points=[]
@@ -743,32 +768,57 @@ class FrameForge:
     def export_menu(self):
         win=tk.Toplevel(self.root); win.title("Экспорт"); win.configure(bg=PANEL); win.resizable(False,False)
         tk.Label(win,text="Экспорт проекта",bg=PANEL,fg=TEXT,font=("Segoe UI",13,"bold")).pack(padx=25,pady=12)
-        for label,fn in [("Видео MP4 — H.264",self.export_mp4),("Видео WebM — VP9",self.export_webm),("Текущий кадр — PNG",self.png),("Анимация — GIF",self.gif),
+        for label,fn in [("Экспорт всей анимации в MP4 — H.264",self.export_mp4),("Экспорт всей анимации в WebM — VP9",self.export_webm),("Текущий кадр — PNG",self.png),("Анимация — GIF",self.gif),
                          ("Последовательность PNG — ZIP",self.png_sequence),("Sprite Sheet — PNG",self.sprite_sheet)]:
             ttk.Button(win,text=label,command=lambda f=fn:(win.destroy(),f())).pack(fill="x",padx=18,pady=4)
 
     def export_video(self, extension, codec, extra_args):
-        path=filedialog.asksaveasfilename(defaultextension="."+extension,filetypes=[(extension.upper()+" video","*."+extension)])
+        path=filedialog.asksaveasfilename(
+            parent=self.root,defaultextension="."+extension,
+            filetypes=[(extension.upper()+" video","*."+extension)])
         if not path:return
+        proc=None
         try:
             import imageio_ffmpeg
             ffmpeg=imageio_ffmpeg.get_ffmpeg_exe()
+            frames=[self.compose_frame(i).copy() for i in range(len(self.layer_frames))]
+            if not frames:raise RuntimeError("В проекте нет кадров для экспорта.")
+            fps=max(1,min(60,int(self.fps.get())))
             width=self.w+(self.w%2); height=self.h+(self.h%2)
-            fps=max(1,int(self.fps.get()))
-            cmd=[ffmpeg,"-y","-f","rawvideo","-vcodec","rawvideo","-s",f"{width}x{height}","-pix_fmt","rgb24","-r",str(fps),"-i","-","-an","-c:v",codec]
-            cmd.extend(extra_args); cmd.extend(["-pix_fmt","yuv420p",path])
-            proc=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-            for frame in self.frames:
-                rgb=Image.new("RGB",(width,height),(255,255,255))
-                rgba=frame.convert("RGBA"); rgb.paste(rgba,mask=rgba.getchannel("A"))
-                proc.stdin.write(rgb.tobytes())
+            cmd=[ffmpeg,"-hide_banner","-loglevel","error","-y",
+                 "-f","rawvideo","-pixel_format","rgb24",
+                 "-video_size",f"{width}x{height}","-framerate",str(fps),
+                 "-i","pipe:0","-an","-c:v",codec]
+            cmd.extend(extra_args)
+            cmd.extend(["-pix_fmt","yuv420p","-r",str(fps),
+                        "-frames:v",str(len(frames)),"-movflags","+faststart",path])
+            proc=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+            for frame in frames:
+                rgba=frame.convert("RGBA")
+                if rgba.size!=(self.w,self.h):
+                    rgba=rgba.resize((self.w,self.h),Image.Resampling.LANCZOS)
+                rgb=Image.new("RGBA",(self.w,self.h),(255,255,255,255))
+                rgb.alpha_composite(rgba)
+                if width!=self.w or height!=self.h:
+                    padded=Image.new("RGBA",(width,height),(255,255,255,255))
+                    padded.alpha_composite(rgb,(0,0))
+                    rgb=padded
+                proc.stdin.write(rgb.convert("RGB").tobytes())
             proc.stdin.close()
-            error=proc.stderr.read().decode("utf-8","replace"); code=proc.wait()
-            if code:raise RuntimeError(error[-1800:] or "FFmpeg завершился с ошибкой")
+            code=proc.wait()
+            if code!=0:raise RuntimeError("FFmpeg не смог собрать видео. Проверьте свободное место и повторите экспорт.")
+            if not os.path.isfile(path) or os.path.getsize(path)==0:
+                raise RuntimeError("Видео не было создано: выходной файл пуст.")
             self.status.set("Видео экспортировано: "+os.path.basename(path))
-            messagebox.showinfo(APP_NAME,"Видео успешно экспортировано.")
+            messagebox.showinfo(APP_NAME,f"Анимация экспортирована в {extension.upper()}.\\nКадров: {len(frames)} · FPS: {fps}",parent=self.root)
         except Exception as exc:
-            messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\n"+str(exc))
+            if proc is not None and proc.poll() is None:
+                try:
+                    if proc.stdin:proc.stdin.close()
+                except Exception:pass
+                proc.kill();proc.wait()
+            messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\\n"+str(exc),parent=self.root)
 
     def export_mp4(self):
         self.export_video("mp4","libx264",["-crf","18","-movflags","+faststart"])
@@ -810,6 +860,7 @@ class FrameForge:
 class MainMenu:
     def __init__(self,root):
         self.root=root
+        root.protocol("WM_DELETE_WINDOW",root.destroy)
         root.title(f"{APP_NAME} {VERSION} — главное меню")
         root.geometry("1040x700");root.minsize(820,580);root.configure(bg="#11131d")
         try:
