@@ -27,6 +27,11 @@ class FrameForge:
         self.root.resizable(True, True)
         self.w, self.h = 1280, 720
         self.frames = [Image.new("RGBA", (self.w, self.h), (0, 0, 0, 0))]
+        self.layer_frames = [[
+            {"name":"Фон","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True},
+            {"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}
+        ]]
+        self.active_layer = 1
         self.index, self.fps = 0, tk.IntVar(value=12)
         self.size, self.opacity = tk.IntVar(value=8), tk.IntVar(value=100)
         self.color, self.tool = "#202633", tk.StringVar(value="brush")
@@ -156,6 +161,16 @@ class FrameForge:
         ttk.Button(nav, text="←", command=lambda: self.select(self.index-1)).pack(side="left", expand=True, fill="x", padx=2)
         ttk.Button(nav, text="→", command=lambda: self.select(self.index+1)).pack(side="left", expand=True, fill="x", padx=2)
         self.counter = tk.Label(right, text="КАДР 1 / 1", bg=PANEL, fg=TEXT, font=("Segoe UI", 11, "bold")); self.counter.pack(pady=10)
+        self.section(right, "Слои")
+        layerbar=tk.Frame(right,bg=PANEL); layerbar.pack(fill="x",padx=8)
+        ttk.Button(layerbar,text="+",width=3,command=self.add_layer).pack(side="left",expand=True,fill="x",padx=1)
+        ttk.Button(layerbar,text="−",width=3,command=self.delete_layer).pack(side="left",expand=True,fill="x",padx=1)
+        ttk.Button(layerbar,text="↑",width=3,command=lambda:self.move_layer(-1)).pack(side="left",expand=True,fill="x",padx=1)
+        ttk.Button(layerbar,text="↓",width=3,command=lambda:self.move_layer(1)).pack(side="left",expand=True,fill="x",padx=1)
+        self.layer_list=tk.Listbox(right,height=7,bg=ALT,fg=TEXT,selectbackground="#365a83",relief="flat",highlightthickness=0,exportselection=False)
+        self.layer_list.pack(fill="x",padx=9,pady=5)
+        self.layer_list.bind("<<ListboxSelect>>",self.select_layer)
+        ttk.Button(right,text="Залить фон цветом",command=self.fill_background).pack(fill="x",padx=9,pady=3)
         self.section(right, "История")
         ttk.Button(right, text="↶ Отменить  Ctrl+Z", command=self.undo).pack(fill="x", padx=10, pady=3)
         ttk.Button(right, text="↷ Вернуть  Ctrl+U", command=self.redo).pack(fill="x", padx=10, pady=3)
@@ -189,6 +204,53 @@ class FrameForge:
     def set_color(self, color):
         self.color = color
         self.swatch.config(bg=color)
+
+    def active_image(self):
+        return self.layer_frames[self.index][self.active_layer]["image"]
+
+    def compose_frame(self, index):
+        result=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
+        for layer in self.layer_frames[index]:
+            if layer["visible"]:
+                result.alpha_composite(layer["image"])
+        self.frames[index]=result
+        return result
+
+    def refresh_layers(self):
+        if not hasattr(self,"layer_list"): return
+        self.layer_list.delete(0,"end")
+        for layer in self.layer_frames[self.index]:
+            self.layer_list.insert("end",("● " if layer["visible"] else "○ ")+layer["name"])
+        self.active_layer=max(0,min(self.active_layer,len(self.layer_frames[self.index])-1))
+        self.layer_list.selection_set(self.active_layer)
+
+    def select_layer(self,event=None):
+        selection=self.layer_list.curselection()
+        if selection: self.active_layer=selection[0]
+
+    def add_layer(self):
+        self.layer_frames[self.index].append({"name":f"Слой {len(self.layer_frames[self.index])+1}","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True})
+        self.active_layer=len(self.layer_frames[self.index])-1
+        self.compose_frame(self.index); self.refresh_layers(); self.render()
+
+    def delete_layer(self):
+        layers=self.layer_frames[self.index]
+        if len(layers)<=1:
+            messagebox.showinfo(APP_NAME,"Нельзя удалить последний слой."); return
+        layers.pop(self.active_layer); self.active_layer=max(0,self.active_layer-1)
+        self.compose_frame(self.index); self.refresh_layers(); self.render()
+
+    def move_layer(self,delta):
+        layers=self.layer_frames[self.index]; target=self.active_layer+delta
+        if not 0<=target<len(layers): return
+        layers[self.active_layer],layers[target]=layers[target],layers[self.active_layer]
+        self.active_layer=target; self.compose_frame(self.index); self.refresh_layers(); self.render()
+
+    def fill_background(self):
+        bg=self.layer_frames[self.index][0]["image"]
+        bg.paste(self.rgba(),(0,0,self.w,self.h))
+        self.compose_frame(self.index); self.render()
+
 
     def toggle_fullscreen(self):
         self.fullscreen = not self.fullscreen
@@ -241,7 +303,8 @@ class FrameForge:
             self.snapshot()
             x = (self.w - layer.width) // 2
             y = (self.h - layer.height) // 2
-            self.frames[self.index].alpha_composite(layer, (x, y))
+            self.active_image().alpha_composite(layer, (x, y))
+            self.compose_frame(self.index)
             self.render()
             self.status.set("Изображение вставлено в текущий кадр")
         except Exception as exc:
@@ -298,7 +361,7 @@ class FrameForge:
                         cd.rectangle((xx,yy,min(ww-1,xx+tile-1),min(hh-1,yy+tile-1)),fill="#dce1e8")
             self.checker_cache=checker
         base=self.checker_cache.convert("RGBA")
-        im=self.frames[self.index].copy()
+        im=self.compose_frame(self.index).copy()
         if self.onion.get() and self.index>0:
             prev=self.frames[self.index-1]
             tint=Image.new("RGBA",prev.size,(255,75,95,0))
@@ -322,13 +385,13 @@ class FrameForge:
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
         if tool=="eyedropper":
-            col=self.frames[self.index].getpixel(p)
+            col=self.active_image().getpixel(p)
             if col[3]: self.color="#%02x%02x%02x"%col[:3]; self.swatch.config(bg=self.color)
             return
         if tool=="fill":
             self.snapshot()
-            ImageDraw.floodfill(self.frames[self.index],p,self.rgba(),thresh=20)
-            self.render(); return
+            ImageDraw.floodfill(self.active_image(),p,self.rgba(),thresh=20)
+            self.compose_frame(self.index); self.render(); return
         self.snapshot()
         self.last=p; self.shape_start=p; self.stroke_points=[p]
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
@@ -373,7 +436,7 @@ class FrameForge:
         if self.last is None:return
         p=self.coords(e); tool=self.tool.get()
         points=self.stroke_points or [p]
-        im=self.frames[self.index]
+        im=self.active_image()
         color=(0,0,0,0) if tool=="eraser" else self.rgba()
         d=ImageDraw.Draw(im)
         width=max(1,self.size.get())
@@ -398,6 +461,7 @@ class FrameForge:
             else:d.ellipse([a,p],outline=color,width=width)
         for item in self.preview_ids:self.canvas.delete(item)
         self.preview_ids=[]; self.last=None; self.stroke_points=[]
+        self.compose_frame(self.index)
         self.render()
         self.status.set("Изменения внесены")
 
@@ -409,6 +473,7 @@ class FrameForge:
                 bg="#284d75" if sel else ALT,fg="white",relief="flat",bd=0,width=8,height=3,
                 highlightthickness=1,highlightbackground=ACCENT if sel else BORDER).pack(side="left",padx=3,pady=5)
         self.counter.config(text=f"КАДР {self.index+1} / {len(self.frames)}")
+        self.refresh_layers()
         self.timeline_hint.config(text=f"{len(self.frames)} кадров • {self.fps.get()} FPS")
 
     def select(self,n):
