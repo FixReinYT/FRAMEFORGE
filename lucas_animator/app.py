@@ -53,6 +53,7 @@ class FrameForge:
         self.build()
         self.bind_shortcuts()
         self.refresh()
+        self.update_tool_buttons()
         self.render()
 
     def setup_style(self):
@@ -106,10 +107,19 @@ class FrameForge:
                  ("▱ Ластик","eraser"),("／ Линия","line"),("□ Прямоуг.","rect"),
                  ("○ Эллипс","ellipse"),("△ Треугол.","triangle"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
         toolgrid=tk.Frame(left,bg=PANEL); toolgrid.pack(fill="x",padx=6)
+        self.tool_buttons={}
         for n,(label,value) in enumerate(tools):
-            ttk.Radiobutton(toolgrid,text=label,value=value,variable=self.tool,
-                            style="Tool.TRadiobutton",width=11).grid(row=n//2,column=n%2,sticky="ew",padx=2,pady=2)
+            cell=tk.Frame(toolgrid,bg=ALT,highlightthickness=1,highlightbackground=BORDER)
+            cell.grid(row=n//2,column=n%2,sticky="nsew",padx=2,pady=2)
+            icon=tk.Canvas(cell,width=38,height=30,bg=ALT,highlightthickness=0)
+            icon.pack(pady=(3,0))
+            self.draw_tool_icon(icon,value)
+            tk.Label(cell,text=label.split(" ",1)[-1],bg=ALT,fg=TEXT,font=("Segoe UI",8)).pack(pady=(0,4))
+            for widget in (cell,icon):
+                widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
+            self.tool_buttons[value]=cell
         toolgrid.grid_columnconfigure(0,weight=1); toolgrid.grid_columnconfigure(1,weight=1)
+        self.update_tool_buttons()
         self.section(left, "Параметры")
         row = tk.Frame(left, bg=PANEL); row.pack(fill="x", padx=12, pady=4)
         tk.Label(row, text="Цвет", bg=PANEL, fg=MUTED).pack(side="left")
@@ -194,6 +204,44 @@ class FrameForge:
         tk.Label(footer, textvariable=self.status, bg="#11151d", fg=MUTED).pack(side="left", padx=10)
         tk.Label(footer, text="FRAMEFORGE • THELUCASSDEN", bg="#11151d", fg="#65748a").pack(side="right", padx=10)
 
+    def choose_tool(self,value):
+        self.tool.set(value)
+        self.update_tool_buttons()
+
+    def update_tool_buttons(self):
+        for name,widget in getattr(self,"tool_buttons",{}).items():
+            active=name==self.tool.get()
+            widget.configure(bg="#263e5c" if active else ALT,
+                             highlightbackground=ACCENT if active else BORDER)
+            for child in widget.winfo_children():
+                child.configure(bg="#263e5c" if active else ALT)
+
+    def draw_tool_icon(self,canvas,name):
+        fg="#e8edf5"; accent="#72b7ff"
+        def line(points,width=2,color=fg):
+            for a,b in zip(points,points[1:]):
+                canvas.create_line(*a,*b,fill=color,width=width,capstyle="round",joinstyle="round")
+        if name=="pencil":
+            line([(8,23),(25,6),(30,11),(13,28),(7,29),(8,23)],3)
+        elif name=="brush":
+            line([(8,25),(17,16),(24,7)],4,accent); canvas.create_oval(5,22,12,29,outline=fg,width=2)
+        elif name=="airbrush":
+            canvas.create_oval(7,5,25,23,outline=fg,width=2); canvas.create_line(17,23,17,29,fill=accent,width=3)
+            for x,y in [(5,8),(29,7),(29,19),(7,27)]:canvas.create_oval(x,y,x+2,y+2,fill=accent,outline=accent)
+        elif name=="eraser":
+            canvas.create_polygon(7,20,19,6,31,17,19,29,fill="#e58ab4",outline=fg,width=2)
+            canvas.create_line(14,25,25,13,fill=fg,width=1)
+        elif name=="line": line([(6,25),(31,5)],3,accent)
+        elif name=="rect": canvas.create_rectangle(7,6,31,26,outline=fg,width=2)
+        elif name=="ellipse": canvas.create_oval(7,5,31,27,outline=fg,width=2)
+        elif name=="triangle": canvas.create_polygon(19,5,32,27,6,27,outline=fg,fill="",width=2)
+        elif name=="fill":
+            canvas.create_polygon(8,17,18,6,29,17,18,28,fill="#72b7ff",outline=fg,width=1)
+            canvas.create_arc(19,18,31,30,start=180,extent=180,outline=accent,width=2)
+        elif name=="eyedropper":
+            line([(9,25),(25,9),(29,13),(13,29),(9,25)],3)
+            canvas.create_line(20,8,26,14,fill=accent,width=3)
+
     def bind_shortcuts(self):
         self.root.bind("<Control-z>", lambda e: self.undo())
         self.root.bind("<Control-u>", lambda e: self.redo())
@@ -208,81 +256,76 @@ class FrameForge:
     def size_changed(self, v): self.size_label.config(text=f"{int(float(v))} px")
     def opacity_changed(self, v): self.opacity_label.config(text=f"{int(float(v))}%")
     def pick(self):
+        import colorsys
         win=tk.Toplevel(self.root)
-        win.title("Выбор цвета")
+        win.title("Цветовой круг")
         win.configure(bg=PANEL)
         win.resizable(False,False)
         win.transient(self.root)
         win.grab_set()
-        hue=tk.DoubleVar(value=0)
-        sat=tk.DoubleVar(value=1)
-        val=tk.DoubleVar(value=1)
         try:
-            import colorsys
-            rr,gg,bb=(int(self.color[i:i+2],16)/255 for i in (1,3,5))
-            h,s,v=colorsys.rgb_to_hsv(rr,gg,bb)
-            hue.set(h*360); sat.set(s); val.set(v)
-        except Exception: pass
-        wheel=tk.Canvas(win,width=330,height=330,bg=PANEL,highlightthickness=0)
+            rgb=tuple(int(self.color[i:i+2],16)/255 for i in (1,3,5))
+            h,s,v=colorsys.rgb_to_hsv(*rgb)
+        except Exception: h,s,v=0,1,1
+        state={"h":h,"s":s,"v":v,"color":self.color}
+        wheel=tk.Canvas(win,width=360,height=330,bg=PANEL,highlightthickness=0)
         wheel.grid(row=0,column=0,rowspan=4,padx=12,pady=12)
-        preview=tk.Canvas(win,width=90,height=60,bg=self.color,highlightthickness=0)
-        preview.grid(row=0,column=1,padx=12,pady=(20,5))
+        preview=tk.Label(win,text="Текущий цвет",bg=self.color,fg="#ffffff",width=15,height=3)
+        preview.grid(row=0,column=1,padx=12,pady=(25,8))
         hexvar=tk.StringVar(value=self.color.upper())
-        ttk.Entry(win,textvariable=hexvar,width=12).grid(row=1,column=1,padx=12,pady=4)
-        result={"color":None}
-        def draw():
-            import colorsys, math
+        ttk.Entry(win,textvariable=hexvar,width=14).grid(row=1,column=1,padx=12,pady=5)
+        def render():
+            import math
             wheel.delete("all")
             cx=cy=165
-            # Hue ring with many small colored arc segments
-            for deg in range(360):
+            # Raster SV square: saturation on X, value on Y
+            square=Image.new("RGB",(200,200))
+            pix=square.load()
+            for yy in range(200):
+                vv=1-yy/199
+                for xx in range(200):
+                    ss=xx/199
+                    rr,gg,bb=colorsys.hsv_to_rgb(state["h"],ss,vv)
+                    pix[xx,yy]=(int(rr*255),int(gg*255),int(bb*255))
+            self._color_square=ImageTk.PhotoImage(square)
+            wheel.create_image(65,65,image=self._color_square,anchor="nw")
+            # Ring segments, drawn as short colored arcs
+            for deg in range(0,360,2):
                 rgb=colorsys.hsv_to_rgb(deg/360,1,1)
-                col="#%02x%02x%02x"%tuple(int(x*255) for x in rgb)
-                wheel.create_arc(cx-145,cy-145,cx+145,cy+145,start=deg,extent=1.4,
-                                 style="arc",outline=col,width=18)
-            # Saturation/value field, clipped visually inside the hue ring
-            base=colorsys.hsv_to_rgb(hue.get()/360,1,1)
-            huecol="#%02x%02x%02x"%tuple(int(x*255) for x in base)
-            wheel.create_rectangle(65,65,265,265,fill=huecol,outline="#d9e0ec",width=1)
-            # White-to-hue horizontal and black vertical overlays
-            for step in range(100):
-                x0=65+step*2
-                ratio=step/99
-                col="#%02x%02x%02x"%tuple(int(255*(1-ratio)+base[i]*255*ratio) for i in range(3))
-                wheel.create_line(x0,66,x0,264,fill=col,width=2)
-            for step in range(100):
-                y0=65+step*2
-                shade=1-step/99
-                wheel.create_line(66,y0,264,y0,fill="#%02x%02x%02x"%(int(255*shade),int(255*shade),int(255*shade)),width=2)
-            x=65+sat.get()*200; y=265-val.get()*200
-            wheel.create_oval(x-6,y-6,x+6,y+6,outline="white",width=2)
-            wheel.create_oval(x-3,y-3,x+3,y+3,outline="#161a22",width=1)
-            rgb=colorsys.hsv_to_rgb(hue.get()/360,sat.get(),val.get())
-            color="#%02x%02x%02x"%tuple(int(k*255) for k in rgb)
-            preview.configure(bg=color); hexvar.set(color.upper())
-        def pick_hue(event):
+                col="#%02x%02x%02x"%tuple(int(k*255) for k in rgb)
+                wheel.create_arc(17,17,313,313,start=deg,extent=2.5,style="arc",outline=col,width=16)
+            sx=65+state["s"]*200
+            sy=65+(1-state["v"])*200
+            wheel.create_oval(sx-6,sy-6,sx+6,sy+6,outline="#ffffff",width=2)
+            wheel.create_oval(sx-3,sy-3,sx+3,sy+3,outline="#10131a",width=1)
+            angle=math.radians(state["h"]*360)
+            hx=165+148*math.cos(angle); hy=165-148*math.sin(angle)
+            wheel.create_oval(hx-7,hy-7,hx+7,hy+7,outline="#ffffff",width=2)
+            rr,gg,bb=colorsys.hsv_to_rgb(state["h"],state["s"],state["v"])
+            state["color"]="#%02x%02x%02x"%(int(rr*255),int(gg*255),int(bb*255))
+            preview.configure(bg=state["color"])
+            hexvar.set(state["color"].upper())
+        def choose(event):
             import math
-            dx=event.x-165; dy=event.y-165
+            dx=event.x-165; dy=165-event.y
             radius=math.hypot(dx,dy)
-            if 130<=radius<=158:
-                hue.set((math.degrees(math.atan2(-dy,dx))%360))
-                draw()
+            if 135<=radius<=160:
+                state["h"]=(math.atan2(dy,dx)%(2*math.pi))/(2*math.pi)
             elif 65<=event.x<=265 and 65<=event.y<=265:
-                sat.set(max(0,min(1,(event.x-65)/200)))
-                val.set(max(0,min(1,(265-event.y)/200)))
-                draw()
-        wheel.bind("<Button-1>",pick_hue)
-        wheel.bind("<B1-Motion>",pick_hue)
+                state["s"]=(event.x-65)/200
+                state["v"]=1-(event.y-65)/200
+            else:return
+            render()
+        wheel.bind("<Button-1>",choose)
+        wheel.bind("<B1-Motion>",choose)
         def accept():
             color=hexvar.get().strip()
             if len(color)==7 and color.startswith("#"):
-                result["color"]=color
-                self.set_color(color)
-                win.destroy()
-            else: messagebox.showerror(APP_NAME,"Введите цвет в формате #RRGGBB",parent=win)
-        ttk.Button(win,text="Выбрать этот цвет",style="Accent.TButton",command=accept).grid(row=2,column=1,padx=12,pady=8)
+                self.set_color(color); win.destroy()
+            else: messagebox.showerror(APP_NAME,"Формат цвета: #RRGGBB",parent=win)
+        ttk.Button(win,text="Применить цвет",style="Accent.TButton",command=accept).grid(row=2,column=1,padx=12,pady=8)
         ttk.Button(win,text="Отмена",command=win.destroy).grid(row=3,column=1,padx=12,pady=(0,15))
-        draw()
+        render()
 
     def set_color(self, color):
         self.color = color
