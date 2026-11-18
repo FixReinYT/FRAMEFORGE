@@ -167,6 +167,8 @@ class FrameForge:
             b.grid(row=i//6,column=i%6,padx=2,pady=2,sticky="nsew")
         for col in range(6): pal.grid_columnconfigure(col,weight=1)
         ttk.Button(left,text="Выбрать цвет…",command=self.pick).pack(fill="x",padx=10,pady=3)
+        ttk.Button(left,text="Отразить слой ↔",command=self.flip_layer_horizontal).pack(fill="x",padx=10,pady=2)
+        ttk.Button(left,text="Отразить слой ↕",command=self.flip_layer_vertical).pack(fill="x",padx=10,pady=2)
         tk.Label(left, text="Размер кисти", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12, pady=(8, 0))
         self.size_label = tk.Label(left, text="8 px", bg=PANEL, fg=TEXT); self.size_label.pack(anchor="e", padx=12)
         ttk.Scale(left, from_=1, to=100, variable=self.size, command=self.size_changed).pack(fill="x", padx=12)
@@ -404,6 +406,17 @@ class FrameForge:
         layers[self.active_layer],layers[target]=layers[target],layers[self.active_layer]
         self.active_layer=target; self.compose_frame(self.index); self.refresh_layers(); self.render()
 
+    def flip_layer_horizontal(self):
+        self.snapshot()
+        self.active_image().transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        self.layer_frames[self.index][self.active_layer]["image"]=self.active_image().transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        self.compose_frame(self.index);self.render();self.status.set("Слой отражён по горизонтали")
+
+    def flip_layer_vertical(self):
+        self.snapshot()
+        self.layer_frames[self.index][self.active_layer]["image"]=self.active_image().transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        self.compose_frame(self.index);self.render();self.status.set("Слой отражён по вертикали")
+
     def fill_background(self):
         bg=self.layer_frames[self.index][0]["image"]
         bg.paste(self.rgba(),(0,0,self.w,self.h))
@@ -615,7 +628,7 @@ class FrameForge:
                     r=width/2
                     for q in (points[0],points[-1]):
                         d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
-        elif tool in ("line","rect","ellipse","triangle"):
+        elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
             a=self.shape_start
             if tool=="line":d.line([a,p],fill=color,width=width)
             elif tool=="rect":d.rectangle([a,p],outline=color,width=width)
