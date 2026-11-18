@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.4.1"
+VERSION = "0.5.0"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -23,7 +23,8 @@ class FrameForge:
         self.root = root
         self.root.title(f"{APP_NAME} {VERSION}")
         self.root.geometry("1500x920")
-        self.root.minsize(1100, 720)
+        self.root.minsize(900, 600)
+        self.root.resizable(True, True)
         self.w, self.h = 1280, 720
         self.frames = [Image.new("RGBA", (self.w, self.h), (0, 0, 0, 0))]
         self.index, self.fps = 0, tk.IntVar(value=12)
@@ -32,6 +33,11 @@ class FrameForge:
         self.onion, self.playing = tk.BooleanVar(value=True), False
         self.project, self.last, self.photo = None, None, None
         self.origin, self.status = (0, 0, 1), tk.StringVar(value="Готово")
+        self.zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self.fullscreen = False
+        self.pan_anchor = None
         self.undo_stack, self.redo_stack = [], []
         self.stroke_before, self.shape_start = None, None
         self.stroke_points = []
@@ -85,6 +91,7 @@ class FrameForge:
             ttk.Button(header, text=label, command=fn).pack(side="left", padx=4, pady=12)
         ttk.Button(header, text="↶ Отмена", command=self.undo).pack(side="left", padx=(18, 3), pady=12)
         ttk.Button(header, text="↷ Повтор", command=self.redo).pack(side="left", padx=3, pady=12)
+        ttk.Button(header, text="⛶ Во весь экран (F11)", command=self.toggle_fullscreen).pack(side="right", padx=8, pady=12)
         tk.Label(header, text="2D ANIMATION WORKSPACE", bg="#11151d", fg="#718096").pack(side="right", padx=16)
 
         work = tk.Frame(self.root, bg=BG); work.pack(fill="both", expand=True, padx=9, pady=8)
@@ -92,7 +99,7 @@ class FrameForge:
         self.section(left, "Инструменты")
         tools = [("Карандаш", "pencil"), ("Кисть", "brush"), ("Аэрограф", "airbrush"),
                  ("Ластик", "eraser"), ("Линия", "line"), ("Прямоугольник", "rect"),
-                 ("Эллипс", "ellipse"), ("Заливка", "fill"), ("Пипетка", "eyedropper")]
+                 ("Эллипс", "ellipse"), ("Треугольник", "triangle"), ("Заливка", "fill"), ("Пипетка", "eyedropper")]
         for label, value in tools:
             ttk.Radiobutton(left, text=label, value=value, variable=self.tool,
                             style="Tool.TRadiobutton").pack(fill="x", padx=7)
@@ -101,6 +108,16 @@ class FrameForge:
         tk.Label(row, text="Цвет", bg=PANEL, fg=MUTED).pack(side="left")
         self.swatch = tk.Button(row, bg=self.color, width=5, relief="flat", command=self.pick)
         self.swatch.pack(side="right", ipady=6)
+        self.section(left, "Палитра")
+        palette = ["#000000","#ffffff","#808080","#c0c0c0","#ff0000","#ff7f00","#ffff00","#7fff00",
+                   "#00ff00","#00ffff","#007fff","#0000ff","#7f00ff","#ff00ff","#ff69b4","#8b4513",
+                   "#f4cccc","#fce5cd","#fff2cc","#d9ead3","#d0e0e3","#c9daf8","#d9d2e9","#ead1dc"]
+        pal = tk.Frame(left, bg=PANEL); pal.pack(fill="x", padx=9, pady=3)
+        for i, col in enumerate(palette):
+            b=tk.Button(pal,bg=col,width=2,height=1,relief="flat",bd=1,
+                        command=lambda value=col:self.set_color(value))
+            b.grid(row=i//6,column=i%6,padx=2,pady=2,sticky="nsew")
+        for col in range(6): pal.grid_columnconfigure(col,weight=1)
         tk.Label(left, text="Размер кисти", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12, pady=(8, 0))
         self.size_label = tk.Label(left, text="8 px", bg=PANEL, fg=TEXT); self.size_label.pack(anchor="e", padx=12)
         ttk.Scale(left, from_=1, to=100, variable=self.size, command=self.size_changed).pack(fill="x", padx=12)
@@ -120,6 +137,11 @@ class FrameForge:
         self.canvas.bind("<Button-1>", self.start)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.release)
+        self.canvas.bind("<MouseWheel>", self.zoom_wheel)
+        self.canvas.bind("<Button-4>", lambda e:self.zoom_at(e.x,e.y,1.12))
+        self.canvas.bind("<Button-5>", lambda e:self.zoom_at(e.x,e.y,1/1.12))
+        self.canvas.bind("<ButtonPress-2>", self.pan_start)
+        self.canvas.bind("<B2-Motion>", self.pan_drag)
 
         right = self.panel(work, 205); right.pack(side="right", fill="y")
         self.section(right, "Анимация")
@@ -155,6 +177,8 @@ class FrameForge:
         self.root.bind("<Control-o>", lambda e: self.open())
         self.root.bind("<Control-n>", lambda e: self.new())
         self.root.bind("<space>", lambda e: self.play())
+        self.root.bind("<F11>", lambda e: self.toggle_fullscreen())
+        self.root.bind("<Escape>", lambda e: self.exit_fullscreen())
 
     def size_changed(self, v): self.size_label.config(text=f"{int(float(v))} px")
     def opacity_changed(self, v): self.opacity_label.config(text=f"{int(float(v))}%")
@@ -267,7 +291,7 @@ class FrameForge:
             item=self.canvas.create_line(*a,*b,fill=color,width=width,
                                          capstyle=tk.ROUND,joinstyle=tk.ROUND)
             self.preview_ids.append(item)
-        elif tool in ("line","rect","ellipse"):
+        elif tool in ("line","rect","ellipse","triangle"):
             for item in self.preview_ids:self.canvas.delete(item)
             self.preview_ids=[]
             a=self.to_canvas(self.shape_start)
@@ -374,6 +398,7 @@ class FrameForge:
         cfg=self.choose_canvas()
         if not cfg:return
         self.w,self.h=cfg["w"],cfg["h"]
+        self.zoom=1.0; self.pan_x=0; self.pan_y=0
         self.snapshot(all_frames=True); self.frames=[Image.new("RGBA",(self.w,self.h),cfg["bg"])]
         self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear()
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
@@ -396,6 +421,7 @@ class FrameForge:
             folder=os.path.join(os.path.dirname(path),data["folder"])
             self.frames=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
             self.w,self.h=data["width"],data["height"]; self.fps.set(data.get("fps",12)); self.index=0; self.project=path
+            self.zoom=1.0; self.pan_x=0; self.pan_y=0
             self.undo_stack.clear(); self.redo_stack.clear()
             self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         except Exception as e: messagebox.showerror(APP_NAME,str(e))
