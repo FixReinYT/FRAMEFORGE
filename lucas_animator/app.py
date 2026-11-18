@@ -136,7 +136,7 @@ class FrameForge:
         self.size_value = tk.Label(left, text="8 px", bg=PANEL, fg=TEXT,
                                    font=("Segoe UI", 10, "bold"))
         self.size_value.pack(anchor="e", padx=14)
-        ttk.Scale(left, from_=1, to=60, orient="horizontal",
+        ttk.Scale(left, from_=1, to=60, orient="horizontal", variable=self.size,
                   command=self.change_size).pack(fill="x", padx=14, pady=(3, 12))
         ttk.Checkbutton(left, text="Луковая шелуха", variable=self.onion,
                         command=self.render).pack(anchor="w", padx=14, pady=8)
