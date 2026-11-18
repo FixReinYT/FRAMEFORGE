@@ -480,13 +480,13 @@ class FrameForge:
         self.index=max(0,min(len(self.frames)-1,n)); self.refresh(); self.render()
 
     def add(self):
-        self.snapshot(all_frames=True); self.frames.insert(self.index+1,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.select(self.index+1)
+        self.snapshot(all_frames=True); self.frames.insert(self.index+1,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
     def duplicate(self):
-        self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.select(self.index+1)
+        self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
     def delete(self):
         self.snapshot()
         if len(self.frames)==1:self.frames[0]=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
-        else:self.frames.pop(self.index); self.index=min(self.index,len(self.frames)-1)
+        else:self.frames.pop(self.index); self.layer_frames.pop(self.index); self.index=min(self.index,len(self.frames)-1)
         self.refresh(); self.render()
 
     def play(self):
@@ -531,7 +531,7 @@ class FrameForge:
         if not cfg:return
         self.w,self.h=cfg["w"],cfg["h"]
         self.zoom=1.0; self.pan_x=0; self.pan_y=0
-        self.snapshot(all_frames=True); self.frames=[Image.new("RGBA",(self.w,self.h),cfg["bg"])]
+        self.snapshot(all_frames=True); self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[self.compose_frame(0)]
         self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear()
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         self.status.set("Создан новый холст")
@@ -540,17 +540,19 @@ class FrameForge:
         path=self.project or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
         if not path:return
         import io
-        manifest={"format":"FRAMEFORGE","version":VERSION,"width":self.w,"height":self.h,"fps":self.fps.get(),"frames":[]}
+        manifest={"format":"FRAMEFORGE","version":VERSION,"width":self.w,"height":self.h,"fps":self.fps.get(),"active_layer":self.active_layer,"frames":[]}
         try:
             with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as archive:
-                for i,im in enumerate(self.frames):
-                    name=f"frames/frame_{i:05d}.png"
-                    buf=io.BytesIO(); im.save(buf,format="PNG")
-                    archive.writestr(name,buf.getvalue())
-                    manifest["frames"].append(name)
+                for fi,frame in enumerate(self.layer_frames):
+                    frame_data={"layers":[]}
+                    for li,layer in enumerate(frame):
+                        name=f"frames/{fi:05d}/layer_{li:03d}.png"
+                        buf=io.BytesIO(); layer["image"].save(buf,format="PNG")
+                        archive.writestr(name,buf.getvalue())
+                        frame_data["layers"].append({"name":layer["name"],"visible":layer["visible"],"file":name})
+                    manifest["frames"].append(frame_data)
                 archive.writestr("project.json",json.dumps(manifest,ensure_ascii=False,indent=2))
-            self.project=path
-            self.status.set("Проект сохранён в одном файле")
+            self.project=path; self.status.set("Проект сохранён вместе со слоями")
         except Exception as exc:
             messagebox.showerror(APP_NAME,f"Не удалось сохранить проект: {exc}")
 
@@ -562,18 +564,33 @@ class FrameForge:
             if zipfile.is_zipfile(path):
                 with zipfile.ZipFile(path,"r") as archive:
                     data=json.loads(archive.read("project.json").decode("utf-8"))
-                    loaded=[Image.open(io.BytesIO(archive.read(name))).convert("RGBA") for name in data["frames"]]
+                    if data["frames"] and isinstance(data["frames"][0],dict):
+                        layer_frames=[]
+                        for frame in data["frames"]:
+                            layers=[]
+                            for layer in frame["layers"]:
+                                image=Image.open(io.BytesIO(archive.read(layer["file"]))).convert("RGBA")
+                                layers.append({"name":layer["name"],"visible":layer.get("visible",True),"image":image})
+                            layer_frames.append(layers)
+                        self.layer_frames=layer_frames
+                        self.frames=[self.compose_frame(i) for i in range(len(layer_frames))]
+                        self.active_layer=min(data.get("active_layer",0),len(layer_frames[0])-1)
+                    else:
+                        self.frames=[Image.open(io.BytesIO(archive.read(name))).convert("RGBA") for name in data["frames"]]
+                        self.layer_frames=[[{"name":"Рисунок","image":im.copy(),"visible":True}] for im in self.frames]
+                        self.active_layer=0
             else:
                 with open(path,encoding="utf-8") as f:data=json.load(f)
                 folder=os.path.join(os.path.dirname(path),data["folder"])
-                loaded=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
-            self.frames=loaded
+                self.frames=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
+                self.layer_frames=[[{"name":"Рисунок (старый проект)","image":im.copy(),"visible":True}] for im in self.frames]
+                self.active_layer=0
             self.w,self.h=data["width"],data["height"]
             self.fps.set(data.get("fps",12)); self.index=0; self.project=path
             self.zoom=1.0; self.pan_x=0; self.pan_y=0
             self.undo_stack.clear(); self.redo_stack.clear()
             self.canvas_info.config(text=f"{self.w} × {self.h}")
-            self.refresh(); self.render()
+            self.refresh(); self.refresh_layers(); self.render()
             self.status.set("Проект загружен")
         except Exception as exc:
             messagebox.showerror(APP_NAME,f"Не удалось открыть проект: {exc}")
