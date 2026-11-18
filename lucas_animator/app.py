@@ -638,10 +638,8 @@ class FrameForge:
             elif tool=="triangle":
                 mid=(a[0]+b[0])/2
                 item=self.canvas.create_polygon(mid,a[1],b[0],b[1],a[0],b[1],outline=self.color,fill="",width=max(1,int(self.size.get()*self.origin[2])))
-            elif tool=="filled_rect": item=self.canvas.create_rectangle(*a,*b,outline=self.color,fill=self.color)
-            elif tool=="filled_ellipse": item=self.canvas.create_oval(*a,*b,outline=self.color,fill=self.color)
             else:
-                item=self.canvas.create_oval(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
+                item=self.canvas.create_oval(*a,*b,outline=self.color,fill=self.color if self.shape_fill["ellipse"] else "",width=max(1,int(self.size.get()*self.origin[2])))
             self.preview_ids=[item]
         self.stroke_points.append(p)
         self.last=p
@@ -1133,29 +1131,29 @@ class FrameForgeSplash:
     def draw(self):
         c=self.canvas
         c.delete("all")
-        c.create_rectangle(0,0,640,500,fill="#100a1d",outline="")
+        c.create_rectangle(0,0,640,500,fill="#111827",outline="")
         c.create_oval(95,30,545,480,outline="#24143c",width=3)
         c.create_oval(125,60,515,450,outline="#321b52",width=2)
         # Panda mascot and clapperboard logo
-        c.create_oval(228,63,302,137,fill="#090711",outline="#a65bff",width=3)
+        c.create_oval(228,63,302,137,fill="#090711",outline="#70aaff",width=3)
         c.create_oval(338,63,412,137,fill="#090711",outline="#a65bff",width=3)
-        c.create_oval(226,82,414,240,fill="#f6f1fc",outline="#b77aff",width=4)
+        c.create_oval(226,82,414,240,fill="#f6f1fc",outline="#8cbcff",width=4)
         c.create_oval(235,139,309,211,fill="#11101a")
         c.create_oval(331,139,405,211,fill="#11101a")
         c.create_oval(260,163,286,189,fill="#42dc88")
-        c.create_oval(354,163,380,189,fill="#a65bff")
+        c.create_oval(354,163,380,189,fill="#4f91df")
         c.create_oval(309,205,331,220,fill="#171321")
         c.create_rectangle(157,250,483,354,fill="#211735",outline="#a65bff",width=5)
-        c.create_polygon(157,250,483,250,461,213,135,213,fill="#6d39b8",outline="#d9b8ff",width=3)
+        c.create_polygon(157,250,483,250,461,213,135,213,fill="#315f98",outline="#a9ceff",width=3)
         for xx in (165,245,325,405):
             c.create_polygon(xx,216,xx+34,216,xx+56,247,xx+22,247,fill="#f0e5ff")
-        c.create_polygon(286,276,286,330,337,303,fill="#bd83ff")
+        c.create_polygon(286,276,286,330,337,303,fill="#8dbbff")
         c.create_text(320,390,text="FRAMEFORGE",fill="#f6efff",font=("Segoe UI",29,"bold"))
         c.create_text(320,422,text="DRAW  •  ANIMATE  •  CREATE",fill="#b7a4d2",font=("Segoe UI",10,"bold"))
-        c.create_rectangle(105,454,535,466,fill="#292038",outline="#6d43a0")
+        c.create_rectangle(105,454,535,466,fill="#202e43",outline="#42658e")
         c.create_rectangle(107,456,107+426*self.progress,464,fill="#a65bff",outline="")
         c.create_text(320,481,text="Подготавливаем рабочее пространство...",
-                      fill="#cdb6ed",font=("Segoe UI",9))
+                      fill="#b8cde8",font=("Segoe UI",9))
 
     def animate(self):
         self.progress=min(1.0,self.progress+0.055)
