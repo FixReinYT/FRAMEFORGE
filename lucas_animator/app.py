@@ -693,8 +693,9 @@ class FrameForge:
         except Exception as exc:
             messagebox.showerror(APP_NAME,f"Не удалось сохранить проект: {exc}")
 
-    def open(self):
-        path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg"),("Legacy project","*.json")])
+    def open(self,path=None):
+        if path is None:
+            path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg"),("Legacy project","*.json")])
         if not path:return
         try:
             import io
@@ -828,10 +829,30 @@ class FrameForgeSplash:
         FrameForge(self.root)
 
 
+def register_project_association():
+    if sys.platform!="win32" or not getattr(sys,"frozen",False):
+        return
+    try:
+        import winreg
+        exe=os.path.abspath(sys.executable)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r"Software\Classes\.ffg") as key:
+            winreg.SetValueEx(key,"",0,winreg.REG_SZ,"FRAMEFORGE.Project")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r"Software\Classes\FRAMEFORGE.Project") as key:
+            winreg.SetValueEx(key,"",0,winreg.REG_SZ,"FRAMEFORGE Project")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r"Software\Classes\FRAMEFORGE.Project\DefaultIcon") as key:
+            winreg.SetValueEx(key,"",0,winreg.REG_SZ,exe+",0")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r"Software\Classes\FRAMEFORGE.Project\shell\open\command") as key:
+            winreg.SetValueEx(key,"",0,winreg.REG_SZ,f'"{exe}" "%1"')
+    except Exception:
+        pass
+
+
 def launch():
+    register_project_association()
     root=tk.Tk()
     FrameForgeSplash(root)
     root.mainloop()
+
 
 
 if __name__=="__main__":
