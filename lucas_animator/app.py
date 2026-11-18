@@ -102,18 +102,20 @@ class FrameForge:
         work = tk.Frame(self.root, bg=BG); work.pack(fill="both", expand=True, padx=9, pady=8)
         left = self.panel(work, 190); left.pack(side="left", fill="y")
         self.section(left, "Инструменты")
-        tools = [("Карандаш", "pencil"), ("Кисть", "brush"), ("Аэрограф", "airbrush"),
-                 ("Ластик", "eraser"), ("Линия", "line"), ("Прямоугольник", "rect"),
-                 ("Эллипс", "ellipse"), ("Треугольник", "triangle"), ("Заливка", "fill"), ("Пипетка", "eyedropper")]
-        for label, value in tools:
-            ttk.Radiobutton(left, text=label, value=value, variable=self.tool,
-                            style="Tool.TRadiobutton").pack(fill="x", padx=7)
+        tools = [("✎ Карандаш","pencil"),("● Кисть","brush"),("◌ Аэрограф","airbrush"),
+                 ("▱ Ластик","eraser"),("／ Линия","line"),("□ Прямоуг.","rect"),
+                 ("○ Эллипс","ellipse"),("△ Треугол.","triangle"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
+        toolgrid=tk.Frame(left,bg=PANEL); toolgrid.pack(fill="x",padx=6)
+        for n,(label,value) in enumerate(tools):
+            ttk.Radiobutton(toolgrid,text=label,value=value,variable=self.tool,
+                            style="Tool.TRadiobutton",width=11).grid(row=n//2,column=n%2,sticky="ew",padx=2,pady=2)
+        toolgrid.grid_columnconfigure(0,weight=1); toolgrid.grid_columnconfigure(1,weight=1)
         self.section(left, "Параметры")
         row = tk.Frame(left, bg=PANEL); row.pack(fill="x", padx=12, pady=4)
         tk.Label(row, text="Цвет", bg=PANEL, fg=MUTED).pack(side="left")
         self.swatch = tk.Button(row, bg=self.color, width=5, relief="flat", command=self.pick)
         self.swatch.pack(side="right", ipady=6)
-        self.section(left, "Палитра")
+        self.section(left, "Палитра • цветовые группы")
         palette = ["#111318","#343941","#626a76","#9ba3af","#dce1e8","#ffffff",
                    "#5b2028","#a8323e","#e14b59","#ff8290","#f5b4ba","#fce4e6",
                    "#64351d","#a85b2b","#d88945","#f2b66d","#f6d7a8","#fff0d8",
@@ -156,7 +158,7 @@ class FrameForge:
         self.canvas.bind("<B2-Motion>", self.pan_drag)
 
         right = self.panel(work, 205); right.pack(side="right", fill="y")
-        self.section(right, "Анимация")
+        self.section(right, "Анимация • таймлайн")
         tk.Label(right, text="Кадров в секунду", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12)
         ttk.Spinbox(right, from_=1, to=60, textvariable=self.fps, width=7).pack(anchor="w", padx=12, pady=5)
         self.playbtn = ttk.Button(right, text="▶ Воспроизвести", style="Accent.TButton", command=self.play)
@@ -168,7 +170,7 @@ class FrameForge:
         ttk.Button(nav, text="←", command=lambda: self.select(self.index-1)).pack(side="left", expand=True, fill="x", padx=2)
         ttk.Button(nav, text="→", command=lambda: self.select(self.index+1)).pack(side="left", expand=True, fill="x", padx=2)
         self.counter = tk.Label(right, text="КАДР 1 / 1", bg=PANEL, fg=TEXT, font=("Segoe UI", 11, "bold")); self.counter.pack(pady=10)
-        self.section(right, "Слои")
+        self.section(right, "Слои • порядок наложения")
         layerbar=tk.Frame(right,bg=PANEL); layerbar.pack(fill="x",padx=8)
         ttk.Button(layerbar,text="+",width=3,command=self.add_layer).pack(side="left",expand=True,fill="x",padx=1)
         ttk.Button(layerbar,text="−",width=3,command=self.delete_layer).pack(side="left",expand=True,fill="x",padx=1)
@@ -502,7 +504,9 @@ class FrameForge:
         self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
     def delete(self):
         self.snapshot()
-        if len(self.frames)==1:self.frames[0]=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
+        if len(self.frames)==1:
+            self.layer_frames[0]=[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]
+            self.active_layer=1; self.frames[0]=self.compose_frame(0)
         else:self.frames.pop(self.index); self.layer_frames.pop(self.index); self.index=min(self.index,len(self.frames)-1)
         self.refresh(); self.render()
 
@@ -581,6 +585,7 @@ class FrameForge:
             if zipfile.is_zipfile(path):
                 with zipfile.ZipFile(path,"r") as archive:
                     data=json.loads(archive.read("project.json").decode("utf-8"))
+                    self.w,self.h=data["width"],data["height"]
                     if data["frames"] and isinstance(data["frames"][0],dict):
                         layer_frames=[]
                         for frame in data["frames"]:
