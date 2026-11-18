@@ -33,10 +33,14 @@ class FrameForge:
             {"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}
         ]]
         self.active_layer = 1
-        self.index, self.fps = 0, tk.IntVar(value=12)
+        user_cfg=os.path.join(os.getenv("APPDATA",os.path.expanduser("~")),"FRAMEFORGE","settings.json")
+        try:
+            with open(user_cfg,encoding="utf-8") as cfg_file: self.user_settings=json.load(cfg_file)
+        except Exception: self.user_settings={}
+        self.index, self.fps = 0, tk.IntVar(value=max(1,min(60,int(self.user_settings.get("default_fps",12)))))
         self.size, self.opacity = tk.IntVar(value=8), tk.IntVar(value=100)
         self.color, self.tool = "#202633", tk.StringVar(value="brush")
-        self.onion, self.playing = tk.BooleanVar(value=True), False
+        self.onion, self.playing = tk.BooleanVar(value=bool(self.user_settings.get("onion_skin",True))), False
         self.project, self.last, self.photo = None, None, None
         self.origin, self.status = (0, 0, 1), tk.StringVar(value="Готово")
         self.zoom = 1.0
@@ -872,7 +876,7 @@ class MainMenu:
         tk.Label(body,text="FPS по умолчанию",bg=PANEL,fg=TEXT).grid(row=0,column=0,sticky="w",pady=8)
         ttk.Spinbox(body,from_=1,to=60,textvariable=fps,width=8).grid(row=0,column=1,padx=12)
         ttk.Checkbutton(body,text="Включать Onion Skin",variable=onion).grid(row=1,column=0,columnspan=2,sticky="w",pady=7)
-        ttk.Checkbutton(body,text="Напоминать о сохранении",variable=autosave).grid(row=2,column=0,columnspan=2,sticky="w",pady=7)
+        ttk.Checkbutton(body,text="Автосохранение (настройка будет активирована позже)",variable=autosave).grid(row=2,column=0,columnspan=2,sticky="w",pady=7)
         tk.Label(body,text="Качество предпросмотра",bg=PANEL,fg=TEXT).grid(row=3,column=0,sticky="w",pady=8)
         ttk.Combobox(body,textvariable=quality,values=["fast","balanced","high"],state="readonly",width=12).grid(row=3,column=1,padx=12)
         tk.Label(body,text="Поддержка пера и давления планшета запланирована отдельным модулем после тестирования устройств.",bg=PANEL,fg=MUTED,wraplength=440,justify="left").grid(row=4,column=0,columnspan=2,sticky="w",pady=12)
