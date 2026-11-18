@@ -366,5 +366,75 @@ class FrameForge:
         p=filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG","*.png")])
         if p:sheet.save(p)
 
+
+class FrameForgeSplash:
+    def __init__(self, root, done):
+        self.root, self.done, self.step = root, done, 0
+        self.win = tk.Toplevel(root)
+        self.win.overrideredirect(True)
+        self.win.configure(bg="#100d1c")
+        width, height = 680, 390
+        x = (self.win.winfo_screenwidth()-width)//2
+        y = (self.win.winfo_screenheight()-height)//2
+        self.win.geometry(f"{width}x{height}+{x}+{y}")
+        self.canvas = tk.Canvas(self.win, width=width, height=height,
+                                bg="#100d1c", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.draw()
+        self.animate()
+
+    def draw(self):
+        c=self.canvas; c.delete("all")
+        c.create_rectangle(0,0,680,390,fill="#100d1c",outline="")
+        for i in range(18):
+            xx=(i*83)%680; yy=(i*47)%390
+            c.create_oval(xx,yy,xx+2,yy+2,fill="#6840a8",outline="")
+        c.create_rounded_rectangle = None
+        c.create_rectangle(28,28,652,362,outline="#503078",width=2)
+        # Clapperboard mark and animated panda silhouette
+        c.create_rectangle(245,78,435,230,fill="#211735",outline="#9d55f5",width=5)
+        c.create_polygon(245,78,435,78,414,108,225,108,fill="#6d39b8",outline="#d9b8ff",width=3)
+        for xx in (260,310,360,410):
+            c.create_line(xx,80,xx+24,106,fill="#f0e5ff",width=7)
+        c.create_text(340,159,text="FF",fill="#f5eaff",font=("Segoe UI",48,"bold"))
+        # Panda ears/head
+        c.create_oval(270,35,325,91,fill="#080811",outline="#b77aff",width=3)
+        c.create_oval(355,35,410,91,fill="#080811",outline="#b77aff",width=3)
+        c.create_oval(280,48,400,151,fill="#f4f0fa",outline="#b77aff",width=3)
+        c.create_oval(289,81,330,122,fill="#11101a")
+        c.create_oval(350,81,391,122,fill="#11101a")
+        c.create_oval(300,93,314,107,fill="#42d58b")
+        c.create_oval(366,93,380,107,fill="#a65bff")
+        c.create_oval(330,116,350,130,fill="#171321")
+        c.create_text(340,264,text="FRAMEFORGE",fill="#f6efff",
+                      font=("Segoe UI",31,"bold"))
+        c.create_text(340,296,text="РЕДАКТОР РИСУНКА И 2D-АНИМАЦИИ",
+                      fill="#b7a4d2",font=("Segoe UI",10,"bold"))
+        c.create_rectangle(95,330,585,340,fill="#292038",outline="#6d43a0")
+        progress=min(1,(self.step+1)/18)
+        c.create_rectangle(97,332,97+486*progress,338,fill="#a65bff",outline="")
+        c.create_text(340,350,text="Загрузка..." if self.step<17 else "Готово",
+                      fill="#cdb6ed",font=("Segoe UI",9))
+
+    def animate(self):
+        if self.step < 18:
+            self.draw()
+            self.step += 1
+            self.root.after(100,self.animate)
+        else:
+            self.win.destroy()
+            self.done()
+
+
+def launch():
+    root=tk.Tk()
+    root.withdraw()
+    def open_editor():
+        root.deiconify()
+        FrameForge(root)
+    FrameForgeSplash(root,open_editor)
+    root.mainloop()
+
+
 if __name__=="__main__":
-    root=tk.Tk(); FrameForge(root); root.mainloop()
+    launch()
