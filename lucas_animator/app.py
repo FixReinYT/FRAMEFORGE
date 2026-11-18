@@ -1,4 +1,4 @@
-import json, os, tkinter as tk, zipfile
+import json, os, sys, tkinter as tk, zipfile
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
@@ -46,6 +46,13 @@ class FrameForge:
 
     def setup_style(self):
         self.root.configure(bg=BG)
+        try:
+            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+            icon_path = os.path.join(base, "assets", "frameforge_icon.png")
+            self._window_icon = tk.PhotoImage(file=icon_path)
+            self.root.iconphoto(True, self._window_icon)
+        except Exception:
+            pass
         s = ttk.Style(); s.theme_use("clam")
         s.configure(".", font=("Segoe UI", 10))
         s.configure("TLabel", background=PANEL, foreground=TEXT)
@@ -427,71 +434,70 @@ class FrameForge:
 
 
 class FrameForgeSplash:
-    def __init__(self, root, done):
-        self.root, self.done, self.step = root, done, 0
-        self.win = tk.Toplevel(root)
-        self.win.overrideredirect(True)
-        self.win.configure(bg="#100d1c")
-        width, height = 680, 390
-        x = (self.win.winfo_screenwidth()-width)//2
-        y = (self.win.winfo_screenheight()-height)//2
-        self.win.geometry(f"{width}x{height}+{x}+{y}")
-        self.canvas = tk.Canvas(self.win, width=width, height=height,
-                                bg="#100d1c", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
+    """Visible startup screen hosted by the root window (not a hidden-root Toplevel)."""
+    def __init__(self, root):
+        self.root=root
+        self.progress=0
+        root.title("FRAMEFORGE — запуск")
+        root.configure(bg="#100a1d")
+        root.geometry("640x500")
+        root.resizable(False,False)
+        root.update_idletasks()
+        try:
+            base=getattr(sys,"_MEIPASS",os.path.dirname(os.path.abspath(__file__)))
+            self.icon=tk.PhotoImage(file=os.path.join(base,"assets","frameforge_icon.png"))
+            root.iconphoto(True,self.icon)
+        except Exception:
+            self.icon=None
+        self.canvas=tk.Canvas(root,width=640,height=500,bg="#100a1d",highlightthickness=0)
+        self.canvas.pack(fill="both",expand=True)
         self.draw()
-        self.animate()
+        root.after(120,self.animate)
 
     def draw(self):
-        c=self.canvas; c.delete("all")
-        c.create_rectangle(0,0,680,390,fill="#100d1c",outline="")
-        for i in range(18):
-            xx=(i*83)%680; yy=(i*47)%390
-            c.create_oval(xx,yy,xx+2,yy+2,fill="#6840a8",outline="")
-        c.create_rounded_rectangle = None
-        c.create_rectangle(28,28,652,362,outline="#503078",width=2)
-        # Clapperboard mark and animated panda silhouette
-        c.create_rectangle(245,78,435,230,fill="#211735",outline="#9d55f5",width=5)
-        c.create_polygon(245,78,435,78,414,108,225,108,fill="#6d39b8",outline="#d9b8ff",width=3)
-        for xx in (260,310,360,410):
-            c.create_line(xx,80,xx+24,106,fill="#f0e5ff",width=7)
-        c.create_text(340,159,text="FF",fill="#f5eaff",font=("Segoe UI",48,"bold"))
-        # Panda ears/head
-        c.create_oval(270,35,325,91,fill="#080811",outline="#b77aff",width=3)
-        c.create_oval(355,35,410,91,fill="#080811",outline="#b77aff",width=3)
-        c.create_oval(280,48,400,151,fill="#f4f0fa",outline="#b77aff",width=3)
-        c.create_oval(289,81,330,122,fill="#11101a")
-        c.create_oval(350,81,391,122,fill="#11101a")
-        c.create_oval(300,93,314,107,fill="#42d58b")
-        c.create_oval(366,93,380,107,fill="#a65bff")
-        c.create_oval(330,116,350,130,fill="#171321")
-        c.create_text(340,264,text="FRAMEFORGE",fill="#f6efff",
-                      font=("Segoe UI",31,"bold"))
-        c.create_text(340,296,text="РЕДАКТОР РИСУНКА И 2D-АНИМАЦИИ",
-                      fill="#b7a4d2",font=("Segoe UI",10,"bold"))
-        c.create_rectangle(95,330,585,340,fill="#292038",outline="#6d43a0")
-        progress=min(1,(self.step+1)/18)
-        c.create_rectangle(97,332,97+486*progress,338,fill="#a65bff",outline="")
-        c.create_text(340,350,text="Загрузка..." if self.step<17 else "Готово",
+        c=self.canvas
+        c.delete("all")
+        c.create_rectangle(0,0,640,500,fill="#100a1d",outline="")
+        c.create_oval(95,30,545,480,outline="#24143c",width=3)
+        c.create_oval(125,60,515,450,outline="#321b52",width=2)
+        # Panda mascot and clapperboard logo
+        c.create_oval(228,63,302,137,fill="#090711",outline="#a65bff",width=3)
+        c.create_oval(338,63,412,137,fill="#090711",outline="#a65bff",width=3)
+        c.create_oval(226,82,414,240,fill="#f6f1fc",outline="#b77aff",width=4)
+        c.create_oval(235,139,309,211,fill="#11101a")
+        c.create_oval(331,139,405,211,fill="#11101a")
+        c.create_oval(260,163,286,189,fill="#42dc88")
+        c.create_oval(354,163,380,189,fill="#a65bff")
+        c.create_oval(309,205,331,220,fill="#171321")
+        c.create_rectangle(157,250,483,354,fill="#211735",outline="#a65bff",width=5)
+        c.create_polygon(157,250,483,250,461,213,135,213,fill="#6d39b8",outline="#d9b8ff",width=3)
+        for xx in (165,245,325,405):
+            c.create_polygon(xx,216,xx+34,216,xx+56,247,xx+22,247,fill="#f0e5ff")
+        c.create_polygon(286,276,286,330,337,303,fill="#bd83ff")
+        c.create_text(320,390,text="FRAMEFORGE",fill="#f6efff",font=("Segoe UI",29,"bold"))
+        c.create_text(320,422,text="DRAW  •  ANIMATE  •  CREATE",fill="#b7a4d2",font=("Segoe UI",10,"bold"))
+        c.create_rectangle(105,454,535,466,fill="#292038",outline="#6d43a0")
+        c.create_rectangle(107,456,107+426*self.progress,464,fill="#a65bff",outline="")
+        c.create_text(320,481,text="Подготавливаем рабочее пространство...",
                       fill="#cdb6ed",font=("Segoe UI",9))
 
     def animate(self):
-        if self.step < 18:
-            self.draw()
-            self.step += 1
-            self.root.after(100,self.animate)
+        self.progress=min(1.0,self.progress+0.055)
+        self.draw()
+        if self.progress < 1:
+            self.root.after(110,self.animate)
         else:
-            self.win.destroy()
-            self.done()
+            self.root.after(250,self.finish)
+
+    def finish(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        FrameForge(self.root)
 
 
 def launch():
     root=tk.Tk()
-    root.withdraw()
-    def open_editor():
-        root.deiconify()
-        FrameForge(root)
-    FrameForgeSplash(root,open_editor)
+    FrameForgeSplash(root)
     root.mainloop()
 
 
