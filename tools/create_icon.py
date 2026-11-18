@@ -1,31 +1,31 @@
-from PIL import Image, ImageDraw, ImageFont
-import os
+from PIL import Image, ImageDraw
+from pathlib import Path
+
 S=512
-im=Image.new("RGBA",(S,S),(17,12,29,255))
+im=Image.new("RGBA",(S,S),(16,10,29,255))
 d=ImageDraw.Draw(im)
-# purple radial-ish background and rounded tile
-for inset in range(0,70,2):
-    col=(34+inset//4,17+inset//5,58+inset//3,255)
-    d.rounded_rectangle((inset,inset,S-inset,S-inset),radius=105,outline=col,width=3)
-d.rounded_rectangle((42,42,470,470),radius=92,fill=(29,20,48,255),outline=(157,85,245,255),width=14)
-# clapperboard body
-d.rounded_rectangle((105,170,407,390),radius=35,fill=(23,17,38,255),outline=(169,103,255,255),width=15)
-d.polygon([(105,170),(407,170),(380,112),(78,112)],fill=(105,53,176,255),outline=(225,194,255,255))
-for x in (105,185,265,345):
-    d.polygon([(x,116),(x+38,116),(x+70,165),(x+32,165)],fill=(243,231,255,255))
-# panda head
-d.ellipse((158,55,245,145),fill=(7,7,15,255),outline=(190,137,255,255),width=7)
-d.ellipse((268,55,355,145),fill=(7,7,15,255),outline=(190,137,255,255),width=7)
-d.ellipse((170,72,344,230),fill=(247,243,251,255),outline=(190,137,255,255),width=6)
-d.ellipse((183,125,245,187),fill=(10,9,18,255))
-d.ellipse((269,125,331,187),fill=(10,9,18,255))
-d.ellipse((203,145,224,166),fill=(64,221,137,255))
-d.ellipse((291,145,312,166),fill=(164,91,255,255))
-d.ellipse((247,185,268,201),fill=(15,12,22,255))
-# FF monogram
-try: font=ImageFont.truetype("arialbd.ttf",100)
-except: font=ImageFont.load_default()
-d.text((256,292),"FF",font=font,anchor="mm",fill=(245,232,255,255),stroke_width=2,stroke_fill=(150,75,235,255))
-os.makedirs("assets",exist_ok=True)
-im.save("assets/frameforge.ico",format="ICO",sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
-im.save("assets/frameforge_icon.png")
+d.rounded_rectangle((18,18,494,494),radius=112,fill=(28,17,48),outline=(171,75,255),width=16)
+# soft inner frame
+d.rounded_rectangle((43,43,469,469),radius=88,outline=(94,47,145),width=5)
+# panda ears and head
+d.ellipse((112,62,236,190),fill=(8,7,16),outline=(184,112,255),width=8)
+d.ellipse((276,62,400,190),fill=(8,7,16),outline=(184,112,255),width=8)
+d.ellipse((126,90,386,328),fill=(248,245,252),outline=(184,112,255),width=8)
+# eye patches and eyes
+d.ellipse((145,170,246,267),fill=(12,10,19))
+d.ellipse((266,170,367,267),fill=(12,10,19))
+d.ellipse((179,199,215,235),fill=(55,224,128))
+d.ellipse((297,199,333,235),fill=(173,89,255))
+d.ellipse((190,204,204,218),fill="white")
+d.ellipse((308,204,322,218),fill="white")
+d.ellipse((240,264,272,286),fill=(15,11,21))
+# clapper board across lower part
+d.rounded_rectangle((82,306,430,423),radius=25,fill=(24,16,40),outline=(173,91,255),width=9)
+d.polygon([(82,306),(430,306),(405,263),(57,263)],fill=(111,49,185),outline=(229,205,255))
+for x in (105,190,275,360):
+    d.polygon([(x,267),(x+40,267),(x+65,302),(x+25,302)],fill=(248,240,255))
+# play symbol
+d.polygon([(230,337),(230,397),(286,367)],fill=(197,128,255))
+out=Path("assets"); out.mkdir(exist_ok=True)
+im.save(out/"frameforge.ico",format="ICO",sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+im.save(out/"frameforge_icon.png")
