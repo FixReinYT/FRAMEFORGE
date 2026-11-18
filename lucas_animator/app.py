@@ -682,7 +682,7 @@ class FrameForge:
     def choose_canvas(self):
         win=tk.Toplevel(self.root); win.title("Новый холст"); win.configure(bg=PANEL); win.resizable(False,False); win.grab_set()
         tk.Label(win,text="Создание нового холста",bg=PANEL,fg=TEXT,font=("Segoe UI",14,"bold")).pack(padx=20,pady=14)
-        preset=tk.StringVar(value="Full HD 1920 × 1080")
+        preset=tk.StringVar(value=self.user_settings.get("default_canvas","HD 1280 × 720"))
         ttk.Combobox(win,textvariable=preset,values=list(PRESETS),state="readonly",width=28).pack(padx=20,pady=6)
         row=tk.Frame(win,bg=PANEL); row.pack(padx=20,pady=8)
         wv,hv=tk.StringVar(value="1920"),tk.StringVar(value="1080")
