@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.8.2"
+VERSION = "0.9.0"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -51,6 +51,10 @@ class FrameForge:
         self.undo_stack, self.redo_stack = [], []
         self.stroke_before, self.shape_start = None, None
         self.stroke_points = []
+        self.shape_fill = {"rect":False,"ellipse":False}
+        self.selection_box = None
+        self.move_anchor = None
+        self.move_image = None
         self.checker_cache = None
         self.canvas_image_id = None
         self.preview_ids = []
@@ -96,7 +100,7 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.8.2", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.9.0", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
         ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
@@ -130,7 +134,7 @@ class FrameForge:
         self.section(left, "Инструменты")
         tools = [("✎ Карандаш","pencil"),("● Кисть","brush"),("◌ Аэрограф","airbrush"),
                  ("▱ Ластик","eraser"),("／ Линия","line"),("□ Прямоуг.","rect"),
-                 ("○ Эллипс","ellipse"),("▰ Прямоуг. заливка","filled_rect"),("● Эллипс заливка","filled_ellipse"),("△ Треугол.","triangle"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
+                 ("○ Эллипс","ellipse"),("△ Треугол.","triangle"),("↖ Выделение","select"),("✥ Перемещение","move"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
         toolgrid=tk.Frame(left,bg=PANEL); toolgrid.pack(fill="x",padx=6)
         self.tool_buttons={}
         for n,(label,value) in enumerate(tools):
@@ -142,6 +146,8 @@ class FrameForge:
             tk.Label(cell,text=label.split(" ",1)[-1],bg=ALT,fg=TEXT,font=("Segoe UI",8)).pack(pady=(0,4))
             for widget in (cell,icon):
                 widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
+                if value in ("rect","ellipse"):
+                    widget.bind("<Button-3>",lambda e,v=value:self.shape_options(v))
             self.tool_buttons[value]=cell
         toolgrid.grid_columnconfigure(0,weight=1); toolgrid.grid_columnconfigure(1,weight=1)
         self.update_tool_buttons()
@@ -186,6 +192,7 @@ class FrameForge:
         self.canvas.pack(fill="both", expand=True)
         self.canvas.bind("<Configure>", self.on_canvas_resize)
         self.canvas.bind("<Button-1>", self.start)
+        self.canvas.bind("<Button-3>",lambda e:self.shape_options(self.tool.get()) if self.tool.get() in ("rect","ellipse") else None)
         self.canvas.bind("<B1-Motion>", self.drag)
         self.canvas.bind("<ButtonRelease-1>", self.release)
         self.canvas.bind("<MouseWheel>", self.zoom_wheel)
@@ -230,6 +237,16 @@ class FrameForge:
         footer = tk.Frame(self.root, bg="#11151d", height=25); footer.pack(fill="x", side="bottom"); footer.pack_propagate(False)
         tk.Label(footer, textvariable=self.status, bg="#11151d", fg=MUTED).pack(side="left", padx=10)
         tk.Label(footer, text="FRAMEFORGE • THELUCASSDEN", bg="#11151d", fg="#65748a").pack(side="right", padx=10)
+
+    def shape_options(self,tool):
+        menu=tk.Menu(self.root,tearoff=0)
+        menu.add_command(label="Только контур",command=lambda:self.set_shape_fill(tool,False))
+        menu.add_command(label="С заливкой",command=lambda:self.set_shape_fill(tool,True))
+        menu.tk_popup(self.root.winfo_pointerx(),self.root.winfo_pointery())
+
+    def set_shape_fill(self,tool,value):
+        self.shape_fill[tool]=value
+        self.status.set(("Заливка включена" if value else "Только контур")+" — "+("прямоугольник" if tool=="rect" else "эллипс"))
 
     def choose_tool(self,value):
         self.tool.set(value)
@@ -559,6 +576,12 @@ class FrameForge:
     def start(self,e):
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
+        if tool=="select":
+            self.selection_box=self.active_image().getbbox();self.render()
+            self.status.set("Выделено содержимое активного слоя" if self.selection_box else "На слое нет рисунка")
+            return
+        if tool=="move":
+            self.snapshot();self.move_anchor=p;self.move_image=self.active_image().copy();self.last=p;return
         if tool=="eyedropper":
             col=self.active_image().getpixel(p)
             if col[3]: self.color="#%02x%02x%02x"%col[:3]; self.swatch.config(bg=self.color)
@@ -583,8 +606,22 @@ class FrameForge:
     def drag(self,e):
         if self.last is None or self.playing:return
         p=self.coords(e); tool=self.tool.get()
+        if tool=="move" and self.move_anchor is not None:
+            dx=p[0]-self.move_anchor[0];dy=p[1]-self.move_anchor[1]
+            moved=Image.new("RGBA",(self.w,self.h),(0,0,0,0));moved.alpha_composite(self.move_image,(dx,dy))
+            self.layer_frames[self.index][self.active_layer]["image"]=moved
+            self.compose_frame(self.index);self.render();return
+        if tool in ("select","eyedropper","fill"):return
+        if e.state & 0x0001 and tool in ("brush","pencil","airbrush","eraser","line","rect","ellipse","triangle"):
+            dx=p[0]-self.shape_start[0];dy=p[1]-self.shape_start[1]
+            if tool in ("rect","ellipse","triangle"):
+                side=max(abs(dx),abs(dy));p=(self.shape_start[0]+(side if dx>=0 else -side),self.shape_start[1]+(side if dy>=0 else -side))
+            else:p=(p[0],self.shape_start[1])
         a=self.to_canvas(self.last); b=self.to_canvas(p)
+        if tool=="move" and self.move_anchor is not None:
+            self.move_anchor=None;self.move_image=None;self.last=None;self.compose_frame(self.index);self.render();self.status.set("Слой перемещён");return
         if tool in ("pencil","brush","airbrush","eraser"):
+            if e.state & 0x0001 and len(points)>1:points=[points[0],(p[0],points[0][1])]
             color="#171c25" if tool=="eraser" else self.color
             width=max(1,int(self.size.get()*self.origin[2]))
             item=self.canvas.create_line(*a,*b,fill=color,width=width,
@@ -628,18 +665,20 @@ class FrameForge:
                     r=width/2
                     for q in (points[0],points[-1]):
                         d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
-        elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
+        elif tool in ("line","rect","ellipse","triangle"):
+            if e.state & 0x0001 and tool in ("rect","ellipse","triangle"):
+                dx=p[0]-self.shape_start[0];dy=p[1]-self.shape_start[1];side=max(abs(dx),abs(dy))
+                p=(self.shape_start[0]+(side if dx>=0 else -side),self.shape_start[1]+(side if dy>=0 else -side))
             a=self.shape_start
             if tool=="line":d.line([a,p],fill=color,width=width)
             elif tool=="rect":d.rectangle([a,p],outline=color,width=width)
             elif tool=="triangle":
                 mid=(a[0]+p[0])//2
                 d.line([(mid,a[1]),p,(a[0],p[1]),(mid,a[1])],fill=color,width=width)
-            elif tool=="filled_rect":d.rectangle([a,p],fill=color)
-            elif tool=="filled_ellipse":d.ellipse([a,p],fill=color)
-            else:d.ellipse([a,p],outline=color,width=width)
+            elif tool=="rect":d.rectangle([a,p],outline=color,fill=color if self.shape_fill["rect"] else None,width=width)
+            else:d.ellipse([a,p],outline=color,fill=color if self.shape_fill["ellipse"] else None,width=width)
         for item in self.preview_ids:self.canvas.delete(item)
-        self.preview_ids=[]; self.last=None; self.stroke_points=[]
+        self.preview_ids=[]; self.last=None; self.stroke_points=[];self.move_anchor=None;self.move_image=None
         self.compose_frame(self.index)
         self.render()
         self.status.set("Изменения внесены")
