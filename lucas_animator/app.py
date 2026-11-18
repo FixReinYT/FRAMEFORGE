@@ -86,7 +86,7 @@ class FrameForge:
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="  0.5", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
-        for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Сохранить", self.save),
+        for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
             ttk.Button(header, text=label, command=fn).pack(side="left", padx=4, pady=12)
         ttk.Button(header, text="↶ Отмена", command=self.undo).pack(side="left", padx=(18, 3), pady=12)
@@ -186,6 +186,67 @@ class FrameForge:
         c = colorchooser.askcolor(self.color, title="Цвет кисти")[1]
         if c: self.color = c; self.swatch.config(bg=c)
 
+    def set_color(self, color):
+        self.color = color
+        self.swatch.config(bg=color)
+
+    def toggle_fullscreen(self):
+        self.fullscreen = not self.fullscreen
+        self.root.attributes("-fullscreen", self.fullscreen)
+
+    def exit_fullscreen(self):
+        if self.fullscreen:
+            self.fullscreen = False
+            self.root.attributes("-fullscreen", False)
+
+    def pan_start(self, event):
+        self.pan_anchor = (event.x, event.y, self.pan_x, self.pan_y)
+
+    def pan_drag(self, event):
+        if self.pan_anchor is None:
+            return
+        ax, ay, px, py = self.pan_anchor
+        self.pan_x = px + event.x - ax
+        self.pan_y = py + event.y - ay
+        self.render()
+
+    def zoom_wheel(self, event):
+        self.zoom_at(event.x, event.y, 1.12 if event.delta > 0 else 1 / 1.12)
+
+    def zoom_at(self, sx, sy, factor):
+        old_scale, old_x, old_y = self.origin
+        image_x = (sx - old_x) / old_scale
+        image_y = (sy - old_y) / old_scale
+        self.zoom = max(0.10, min(8.0, self.zoom * factor))
+        cw = max(1, self.canvas.winfo_width())
+        ch = max(1, self.canvas.winfo_height())
+        fit = min((cw - 30) / self.w, (ch - 30) / self.h)
+        new_scale = fit * self.zoom
+        self.pan_x = sx - image_x * new_scale - (cw - self.w * new_scale) / 2
+        self.pan_y = sy - image_y * new_scale - (ch - self.h * new_scale) / 2
+        self.render()
+
+    def insert_image(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Изображения", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"),
+                       ("Все файлы", "*.*")])
+        if not path:
+            return
+        try:
+            with Image.open(path) as source:
+                source.seek(0)
+                layer = source.convert("RGBA")
+            if layer.width > self.w or layer.height > self.h:
+                layer.thumbnail((self.w, self.h), Image.Resampling.LANCZOS)
+            self.snapshot()
+            x = (self.w - layer.width) // 2
+            y = (self.h - layer.height) // 2
+            self.frames[self.index].alpha_composite(layer, (x, y))
+            self.render()
+            self.status.set("Изображение вставлено в текущий кадр")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Не удалось вставить изображение: {exc}")
+
     def snapshot(self, all_frames=False):
         # A paint stroke only snapshots its active frame, not every frame in the project.
         if all_frames:
@@ -214,8 +275,8 @@ class FrameForge:
 
     def geometry(self):
         cw, ch = max(1,self.canvas.winfo_width()), max(1,self.canvas.winfo_height())
-        scale = min((cw-30)/self.w, (ch-30)/self.h)
-        return scale, (cw-self.w*scale)/2, (ch-self.h*scale)/2
+        scale = min((cw-30)/self.w, (ch-30)/self.h) * self.zoom
+        return scale, (cw-self.w*scale)/2 + self.pan_x, (ch-self.h*scale)/2 + self.pan_y
 
     def on_canvas_resize(self, event=None):
         self.checker_cache = None
@@ -273,7 +334,7 @@ class FrameForge:
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
         cx,cy=self.to_canvas(p)
         self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
-        if tool in ("line","rect","ellipse"):
+        if tool in ("line","rect","ellipse","triangle"):
             self.preview_ids=[]
         self.status.set("Рисование...")
 
@@ -299,6 +360,9 @@ class FrameForge:
                 item=self.canvas.create_line(*a,*b,fill=self.color,width=max(1,int(self.size.get()*self.origin[2])))
             elif tool=="rect":
                 item=self.canvas.create_rectangle(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
+            elif tool=="triangle":
+                mid=(a[0]+b[0])/2
+                item=self.canvas.create_polygon(mid,a[1],b[0],b[1],a[0],b[1],outline=self.color,fill="",width=max(1,int(self.size.get()*self.origin[2])))
             else:
                 item=self.canvas.create_oval(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
             self.preview_ids=[item]
@@ -324,10 +388,13 @@ class FrameForge:
                     r=width/2
                     for q in (points[0],points[-1]):
                         d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
-        elif tool in ("line","rect","ellipse"):
+        elif tool in ("line","rect","ellipse","triangle"):
             a=self.shape_start
             if tool=="line":d.line([a,p],fill=color,width=width)
             elif tool=="rect":d.rectangle([a,p],outline=color,width=width)
+            elif tool=="triangle":
+                mid=(a[0]+p[0])//2
+                d.line([(mid,a[1]),p,(a[0],p[1]),(mid,a[1])],fill=color,width=width)
             else:d.ellipse([a,p],outline=color,width=width)
         for item in self.preview_ids:self.canvas.delete(item)
         self.preview_ids=[]; self.last=None; self.stroke_points=[]
