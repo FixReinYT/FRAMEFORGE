@@ -3,7 +3,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -96,7 +96,7 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.8.1", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.8.2", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
         ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
@@ -873,87 +873,202 @@ class FrameForge:
 class MainMenu:
     def __init__(self,root):
         self.root=root
-        root.protocol("WM_DELETE_WINDOW",root.destroy)
+        root.protocol("WM_DELETE_WINDOW",self.close_app)
         root.title(f"{APP_NAME} {VERSION} — главное меню")
-        root.geometry("1040x700");root.minsize(820,580);root.configure(bg="#11131d")
+        root.geometry("1120x760");root.minsize(900,650);root.configure(bg="#0d111b")
         try:
             base=getattr(sys,"_MEIPASS",os.path.dirname(os.path.abspath(__file__)))
             self.icon=tk.PhotoImage(file=os.path.join(base,"assets","frameforge_icon.png"));root.iconphoto(True,self.icon)
         except Exception:self.icon=None
         self.settings_path=os.path.join(os.getenv("APPDATA",os.path.expanduser("~")),"FRAMEFORGE","settings.json")
-        self.settings=self.load_settings();self.build()
+        self.settings=self.load_settings()
+        self.build()
 
     def load_settings(self):
+        defaults={"default_fps":12,"onion_skin":True,"preview_quality":"balanced",
+                  "default_canvas":"HD 1280 × 720","confirm_exit":True,"show_tips":True,"recent":[]}
         try:
-            with open(self.settings_path,encoding="utf-8") as f:return json.load(f)
-        except Exception:return {"default_fps":12,"onion_skin":True,"autosave":True,"preview_quality":"balanced","recent":[]}
+            with open(self.settings_path,encoding="utf-8") as f:defaults.update(json.load(f))
+        except Exception:pass
+        return defaults
 
     def save_settings(self):
         os.makedirs(os.path.dirname(self.settings_path),exist_ok=True)
         with open(self.settings_path,"w",encoding="utf-8") as f:json.dump(self.settings,f,ensure_ascii=False,indent=2)
 
+    def close_app(self):
+        if self.settings.get("confirm_exit",True):
+            if not messagebox.askyesno(APP_NAME,"Закрыть FRAMEFORGE?",parent=self.root):return
+        self.root.destroy()
+
     def build(self):
-        c=tk.Canvas(self.root,bg="#11131d",highlightthickness=0);c.pack(fill="both",expand=True)
-        c.create_oval(650,-180,1220,390,fill="#1b2440",outline="")
-        c.create_oval(760,-100,1160,300,outline="#354c78",width=2)
-        c.create_text(70,58,text="FRAMEFORGE",anchor="w",fill="#f0f3fa",font=("Segoe UI",30,"bold"))
-        c.create_text(73,100,text="DRAW  •  ANIMATE  •  CREATE",anchor="w",fill="#72aaff",font=("Segoe UI",10,"bold"))
-        c.create_text(75,165,text="Творческая мастерская 2D-анимации",anchor="w",fill="#e8edf5",font=("Segoe UI",21,"bold"))
-        c.create_text(75,202,text="Создавай кадр за кадром. Твоя история начинается здесь.",anchor="w",fill="#9aa8bb",font=("Segoe UI",11))
-        self.button(c,75,255,390,316,"＋   Новый проект",self.new_project,True)
-        self.button(c,75,330,390,391,"▣   Открыть проект .FFG",self.open_project)
-        self.button(c,75,405,390,466,"⚙   Настройки",self.preferences)
-        self.button(c,75,480,390,541,"ⓘ   Авторы и о программе",self.about)
-        c.create_text(75,610,text="ПОСЛЕДНИЕ ПРОЕКТЫ",anchor="w",fill="#72aaff",font=("Segoe UI",10,"bold"))
+        for w in self.root.winfo_children():w.destroy()
+        shell=tk.Frame(self.root,bg="#0d111b");shell.pack(fill="both",expand=True)
+        top=tk.Frame(shell,bg="#111827",height=76);top.pack(fill="x");top.pack_propagate(False)
+        brand=tk.Frame(top,bg="#111827");brand.pack(side="left",padx=28)
+        tk.Label(brand,text="▣",bg="#111827",fg="#80b8ff",font=("Segoe UI",25,"bold")).pack(side="left",padx=(0,10))
+        tk.Label(brand,text="FRAME",bg="#111827",fg="#f4f7ff",font=("Segoe UI",20,"bold")).pack(side="left")
+        tk.Label(brand,text="FORGE",bg="#111827",fg="#75aaff",font=("Segoe UI",20,"bold")).pack(side="left")
+        tk.Label(top,text="2D ANIMATION STUDIO",bg="#111827",fg="#71829e",font=("Segoe UI",9,"bold")).pack(side="right",padx=28)
+        content=tk.Frame(shell,bg="#0d111b");content.pack(fill="both",expand=True,padx=30,pady=25)
+        hero=tk.Frame(content,bg="#17243a",highlightthickness=1,highlightbackground="#2b4164")
+        hero.pack(fill="x",pady=(0,20))
+        left=tk.Frame(hero,bg="#17243a");left.pack(side="left",fill="both",expand=True,padx=28,pady=24)
+        tk.Label(left,text="ТВОЯ МАСТЕРСКАЯ АНИМАЦИИ",bg="#17243a",fg="#7fb6ff",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        tk.Label(left,text="От первого штриха\nдо ожившей истории.",bg="#17243a",fg="#f4f7ff",font=("Segoe UI",25,"bold"),justify="left").pack(anchor="w",pady=(8,5))
+        tk.Label(left,text="Рисуй. Создавай кадры. Задавай движение.",bg="#17243a",fg="#aab8cd",font=("Segoe UI",11)).pack(anchor="w")
+        tk.Label(hero,text="FF",bg="#17243a",fg="#294a77",font=("Segoe UI",64,"bold")).pack(side="right",padx=42)
+        area=tk.Frame(content,bg="#0d111b");area.pack(fill="both",expand=True)
+        main=tk.Frame(area,bg="#0d111b");main.pack(side="left",fill="both",expand=True)
+        side=tk.Frame(area,bg="#141c2a",width=300,highlightthickness=1,highlightbackground="#29374c")
+        side.pack(side="right",fill="y",padx=(20,0));side.pack_propagate(False)
+        tk.Label(main,text="НАЧАТЬ РАБОТУ",bg="#0d111b",fg="#8194b1",font=("Segoe UI",9,"bold")).pack(anchor="w",pady=(0,10))
+        self.menu_button(main,"＋","Новый проект","Создай холст и начни рисовать",self.new_project,True)
+        self.menu_button(main,"▧","Открыть проект","Продолжить работу с файлом .FFG",self.open_project)
+        self.menu_button(main,"▶","Обучение","Короткий интерактивный гид по созданию 2D-анимации",self.tutorial)
+        tk.Label(main,text="ПЕРСОНАЛИЗАЦИЯ",bg="#0d111b",fg="#8194b1",font=("Segoe UI",9,"bold")).pack(anchor="w",pady=(19,10))
+        row=tk.Frame(main,bg="#0d111b");row.pack(fill="x")
+        self.small_button(row,"⚙  Настройки",self.preferences)
+        self.small_button(row,"✦  Авторы",self.about)
+        tk.Label(side,text="НЕДАВНИЕ ПРОЕКТЫ",bg="#141c2a",fg="#83b8ff",font=("Segoe UI",9,"bold")).pack(anchor="w",padx=18,pady=(20,10))
         recent=self.settings.get("recent",[])
         if recent:
-            for i,p in enumerate(recent[:3]):c.create_text(75,642+i*19,text=os.path.basename(p),anchor="w",fill="#c6d0df",font=("Segoe UI",9))
-        else:c.create_text(75,642,text="Здесь будут отображаться недавно открытые проекты",anchor="w",fill="#718096",font=("Segoe UI",9))
-        c.create_text(960,655,text=f"Версия {VERSION}   •   TheLucassDen",anchor="e",fill="#718096",font=("Segoe UI",9))
+            for p in recent[:6]:
+                if os.path.isfile(p):
+                    b=tk.Button(side,text="▣  "+os.path.basename(p),anchor="w",command=lambda path=p:self.open_project(path),
+                        bg="#1d293b",fg="#e7edf8",activebackground="#2b4160",activeforeground="white",
+                        relief="flat",bd=0,padx=12,pady=10,cursor="hand2")
+                    b.pack(fill="x",padx=12,pady=3)
+        else:
+            tk.Label(side,text="Пока пусто.\nТвои проекты появятся здесь.",bg="#141c2a",fg="#7889a2",
+                     justify="left",font=("Segoe UI",10)).pack(anchor="w",padx=18,pady=8)
+        tk.Frame(side,bg="#29374c",height=1).pack(fill="x",padx=14,pady=14)
+        tk.Label(side,text="СОВЕТ ДНЯ",bg="#141c2a",fg="#83b8ff",font=("Segoe UI",9,"bold")).pack(anchor="w",padx=18)
+        tips=["Сначала сделай ключевые позы — промежуточные кадры добавишь позже.",
+              "Разделяй фон и персонажа по слоям: так проще вносить правки.",
+              "Короткая анимация на 12 FPS — отличный способ начать.",
+              "Дублируй кадр, а затем слегка меняй позу для плавного движения."]
+        tip=tips[sum(map(ord,__import__("datetime").date.today().isoformat()))%len(tips)] if self.settings.get("show_tips",True) else "Подсказки отключены в настройках."
+        tk.Label(side,text=tip,bg="#141c2a",fg="#aab8cd",wraplength=250,justify="left").pack(anchor="w",padx=18,pady=(7,18))
+        footer=tk.Frame(shell,bg="#0a0e16",height=32);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
+        tk.Label(footer,text=f"FRAMEFORGE {VERSION}  •  THELUCASSDEN",bg="#0a0e16",fg="#66758d",font=("Segoe UI",8,"bold")).pack(side="left",padx=18)
+        tk.Label(footer,text="DRAW  •  ANIMATE  •  CREATE",bg="#0a0e16",fg="#66758d",font=("Segoe UI",8)).pack(side="right",padx=18)
 
-    def button(self,c,x1,y1,x2,y2,label,command,primary=False):
-        bg="#315f9d" if primary else "#202838"
-        rect=c.create_rectangle(x1,y1,x2,y2,fill=bg,outline="#4b6d9d" if primary else "#354052",width=1)
-        txt=c.create_text(x1+20,(y1+y2)/2,text=label,anchor="w",fill="#ffffff",font=("Segoe UI",12,"bold"))
-        for item in (rect,txt):c.tag_bind(item,"<Button-1>",lambda e,fn=command:fn())
+    def menu_button(self,parent,icon,title,subtitle,command,primary=False):
+        bg="#244b7b" if primary else "#172233";edge="#4c85c4" if primary else "#2c3c53"
+        box=tk.Frame(parent,bg=bg,highlightthickness=1,highlightbackground=edge)
+        box.pack(fill="x",pady=5)
+        btn=tk.Button(box,text=icon,bg=bg,fg="#8fc1ff",activebackground=bg,activeforeground="#ffffff",
+                      font=("Segoe UI",19,"bold"),relief="flat",bd=0,width=3,cursor="hand2",command=command)
+        btn.pack(side="left",padx=(10,0),pady=9)
+        textf=tk.Frame(box,bg=bg);textf.pack(side="left",fill="both",expand=True,padx=8,pady=8)
+        tk.Button(textf,text=title,anchor="w",bg=bg,fg="#f0f4fc",activebackground=bg,activeforeground="#ffffff",
+                  font=("Segoe UI",12,"bold"),relief="flat",bd=0,cursor="hand2",command=command).pack(fill="x")
+        tk.Label(textf,text=subtitle,anchor="w",bg=bg,fg="#a1b0c5",font=("Segoe UI",9)).pack(fill="x")
+
+    def small_button(self,parent,label,command):
+        tk.Button(parent,text=label,command=command,bg="#1a2638",fg="#dce8fa",activebackground="#2b4160",
+                  activeforeground="white",relief="flat",bd=0,font=("Segoe UI",10,"bold"),
+                  padx=18,pady=13,cursor="hand2").pack(side="left",fill="x",expand=True,padx=(0,8))
 
     def new_project(self):
         for w in self.root.winfo_children():w.destroy()
         FrameForge(self.root)
 
     def open_project(self,path=None):
-        if path is None:path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg")])
+        if path is None:path=filedialog.askopenfilename(parent=self.root,filetypes=[("FRAMEFORGE project","*.ffg")])
         if not path:return
         for w in self.root.winfo_children():w.destroy()
         app=FrameForge(self.root);app.open(path)
         self.settings["recent"]=[path]+[p for p in self.settings.get("recent",[]) if p!=path]
         self.settings["recent"]=self.settings["recent"][:8];self.save_settings()
 
+    def tutorial(self):
+        win=tk.Toplevel(self.root);win.title("FRAMEFORGE — основы 2D-анимации")
+        win.geometry("760x620");win.minsize(650,540);win.configure(bg="#111827");win.transient(self.root)
+        pages=[
+          ("01  СОЗДАЙ ХОЛСТ","Нажми «Новый проект». Выбери разрешение: для первых упражнений подойдёт HD 1280 × 720. Прозрачный фон удобен для персонажей, белый — для набросков.",
+           "Упражнение: создай холст 512 × 512 и нарисуй простой круг — это будет голова персонажа."),
+          ("02  ОСВОЙ ИНСТРУМЕНТЫ","Кисть и карандаш рисуют линии, ластик стирает, аэрограф добавляет мягкие пятна. Размер и непрозрачность настраиваются в прокручиваемой левой панели.",
+           "Совет: используй крупную кисть для силуэта, маленькую — для глаз и деталей."),
+          ("03  РАБОТАЙ СО СЛОЯМИ","Разделяй фон, персонажа и детали по разным слоям. Меняй порядок слоёв и видимость, чтобы редактировать элементы независимо.",
+           "Упражнение: создай слой «Фон» и слой «Персонаж». Нарисуй фон отдельно от героя."),
+          ("04  СОЗДАЙ ДВИЖЕНИЕ","Добавь кадр кнопкой «Добавить» или продублируй предыдущий. На новом кадре немного измени положение объекта. Повторяй, чтобы получить последовательность движения.",
+           "Начни с 2–3 кадров: круг слева, круг посередине, круг справа — получится простое перемещение."),
+          ("05  ВКЛЮЧИ ONION SKIN","Луковая шелуха помогает видеть соседние кадры и сравнивать положения рисунка. Настрой FPS: 12 кадров/с — удобная стартовая скорость для рисованной анимации.",
+           "Если движение дёргается, добавь промежуточные кадры или измени расстояние между ключевыми позами."),
+          ("06  ПРОСМОТР И ЭКСПОРТ","Нажми «Воспроизвести», чтобы проверить результат. Сохрани исходник в .FFG. Через «Экспорт» можно вывести GIF, MP4, WebM, PNG, PNG Sequence или Sprite Sheet.",
+           "Важно: .FFG — редактируемый проект, MP4/GIF — готовое видео для просмотра и публикации.")
+        ]
+        state={"page":0}
+        top=tk.Frame(win,bg="#111827");top.pack(fill="x",padx=24,pady=(22,10))
+        tk.Label(top,text="FRAMEFORGE ACADEMY",bg="#111827",fg="#78b5ff",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        title=tk.Label(top,text="",bg="#111827",fg="#f2f6ff",font=("Segoe UI",20,"bold"));title.pack(anchor="w",pady=(7,0))
+        progress=tk.Label(top,text="",bg="#111827",fg="#8293ad",font=("Segoe UI",9));progress.pack(anchor="w",pady=5)
+        body=tk.Frame(win,bg="#1a2638",highlightthickness=1,highlightbackground="#30445f");body.pack(fill="both",expand=True,padx=24,pady=12)
+        desc=tk.Label(body,text="",bg="#1a2638",fg="#e1e9f6",font=("Segoe UI",12),wraplength=660,justify="left",anchor="nw")
+        desc.pack(fill="both",expand=True,padx=24,pady=(24,12))
+        task=tk.Label(body,text="",bg="#243651",fg="#a9ceff",font=("Segoe UI",10),wraplength=650,justify="left",anchor="w")
+        task.pack(fill="x",padx=18,pady=(0,18),ipady=12)
+        nav=tk.Frame(win,bg="#111827");nav.pack(fill="x",padx=24,pady=(0,20))
+        back=tk.Button(nav,text="← Назад",command=lambda:move(-1),bg="#202e43",fg="white",relief="flat",padx=18,pady=10)
+        back.pack(side="left")
+        close=tk.Button(nav,text="Закрыть",command=win.destroy,bg="#202e43",fg="white",relief="flat",padx=18,pady=10);close.pack(side="right")
+        nxt=tk.Button(nav,text="Далее →",command=lambda:move(1),bg="#326bb0",fg="white",relief="flat",padx=20,pady=10);nxt.pack(side="right",padx=8)
+        def move(delta):
+            state["page"]=max(0,min(len(pages)-1,state["page"]+delta))
+            a,b,d=pages[state["page"]]
+            title.config(text=a);desc.config(text=b);task.config(text=d)
+            progress.config(text=f"Урок {state['page']+1} из {len(pages)}")
+            back.config(state="normal" if state["page"] else "disabled")
+            nxt.config(text="Готово ✓" if state["page"]==len(pages)-1 else "Далее →",
+                       command=win.destroy if state["page"]==len(pages)-1 else lambda:move(1))
+        move(0)
+
     def preferences(self):
-        win=tk.Toplevel(self.root);win.title("Настройки FRAMEFORGE");win.configure(bg=PANEL);win.resizable(False,False);win.transient(self.root);win.grab_set()
-        tk.Label(win,text="Настройки программы",bg=PANEL,fg=TEXT,font=("Segoe UI",17,"bold")).pack(anchor="w",padx=20,pady=(18,10))
-        body=tk.Frame(win,bg=PANEL);body.pack(fill="both",padx=20,pady=8)
+        win=tk.Toplevel(self.root);win.title("Настройки FRAMEFORGE");win.geometry("570x570")
+        win.configure(bg="#111827");win.resizable(False,False);win.transient(self.root);win.grab_set()
+        tk.Label(win,text="Настройки FRAMEFORGE",bg="#111827",fg="#f1f5fc",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=24,pady=(22,4))
+        tk.Label(win,text="Настрой рабочую среду под свой процесс.",bg="#111827",fg="#91a1b8",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=(0,14))
+        body=tk.Frame(win,bg="#182336");body.pack(fill="both",expand=True,padx=20,pady=8)
         fps=tk.IntVar(value=int(self.settings.get("default_fps",12)))
         onion=tk.BooleanVar(value=bool(self.settings.get("onion_skin",True)))
-        autosave=tk.BooleanVar(value=bool(self.settings.get("autosave",True)))
         quality=tk.StringVar(value=self.settings.get("preview_quality","balanced"))
-        tk.Label(body,text="FPS по умолчанию",bg=PANEL,fg=TEXT).grid(row=0,column=0,sticky="w",pady=8)
-        ttk.Spinbox(body,from_=1,to=60,textvariable=fps,width=8).grid(row=0,column=1,padx=12)
-        ttk.Checkbutton(body,text="Включать Onion Skin",variable=onion).grid(row=1,column=0,columnspan=2,sticky="w",pady=7)
-        ttk.Checkbutton(body,text="Автосохранение (настройка будет активирована позже)",variable=autosave).grid(row=2,column=0,columnspan=2,sticky="w",pady=7)
-        tk.Label(body,text="Качество предпросмотра",bg=PANEL,fg=TEXT).grid(row=3,column=0,sticky="w",pady=8)
-        ttk.Combobox(body,textvariable=quality,values=["fast","balanced","high"],state="readonly",width=12).grid(row=3,column=1,padx=12)
-        tk.Label(body,text="Поддержка пера и давления планшета запланирована отдельным модулем после тестирования устройств.",bg=PANEL,fg=MUTED,wraplength=440,justify="left").grid(row=4,column=0,columnspan=2,sticky="w",pady=12)
+        preset=tk.StringVar(value=self.settings.get("default_canvas","HD 1280 × 720"))
+        confirm=tk.BooleanVar(value=bool(self.settings.get("confirm_exit",True)))
+        tips=tk.BooleanVar(value=bool(self.settings.get("show_tips",True)))
+        def label(text,row):
+            tk.Label(body,text=text,bg="#182336",fg="#dce6f5",font=("Segoe UI",10,"bold")).grid(row=row,column=0,sticky="w",padx=16,pady=10)
+        label("FPS по умолчанию",0);ttk.Spinbox(body,from_=1,to=60,textvariable=fps,width=9).grid(row=0,column=1,padx=12)
+        label("Размер нового холста",1);ttk.Combobox(body,textvariable=preset,values=list(PRESETS),state="readonly",width=25).grid(row=1,column=1,padx=12)
+        ttk.Checkbutton(body,text="Включать Onion Skin в новых проектах",variable=onion).grid(row=2,column=0,columnspan=2,sticky="w",padx=16,pady=8)
+        ttk.Checkbutton(body,text="Спрашивать подтверждение при выходе",variable=confirm).grid(row=3,column=0,columnspan=2,sticky="w",padx=16,pady=8)
+        ttk.Checkbutton(body,text="Показывать совет дня в главном меню",variable=tips).grid(row=4,column=0,columnspan=2,sticky="w",padx=16,pady=8)
+        label("Качество предпросмотра",5);ttk.Combobox(body,textvariable=quality,values=["fast","balanced","high"],state="readonly",width=13).grid(row=5,column=1,padx=12)
+        tk.Label(body,text="Параметры сохраняются в профиле Windows и применяются при следующем запуске проекта.",bg="#182336",fg="#91a1b8",wraplength=490,justify="left").grid(row=6,column=0,columnspan=2,sticky="w",padx=16,pady=14)
         def save():
-            self.settings.update(default_fps=max(1,min(60,fps.get())),onion_skin=onion.get(),autosave=autosave.get(),preview_quality=quality.get())
-            self.save_settings();win.destroy()
-        ttk.Button(win,text="Сохранить настройки",style="Accent.TButton",command=save).pack(fill="x",padx=20,pady=(5,18))
+            try:f=max(1,min(60,int(fps.get())))
+            except Exception:messagebox.showerror(APP_NAME,"FPS должен быть числом от 1 до 60.",parent=win);return
+            self.settings.update(default_fps=f,onion_skin=onion.get(),preview_quality=quality.get(),
+                                 default_canvas=preset.get(),confirm_exit=confirm.get(),show_tips=tips.get())
+            self.save_settings();win.destroy();messagebox.showinfo(APP_NAME,"Настройки сохранены.",parent=self.root)
+        tk.Button(win,text="СОХРАНИТЬ НАСТРОЙКИ",command=save,bg="#3477bd",fg="white",activebackground="#438bd4",
+                  relief="flat",font=("Segoe UI",10,"bold"),pady=12,cursor="hand2").pack(fill="x",padx=20,pady=(8,18))
 
     def about(self):
-        win=tk.Toplevel(self.root);win.title("Авторы и о программе");win.configure(bg=PANEL);win.resizable(False,False)
-        tk.Label(win,text="FRAMEFORGE",bg=PANEL,fg=TEXT,font=("Segoe UI",23,"bold")).pack(padx=35,pady=(25,5))
-        tk.Label(win,text=f"Версия {VERSION}\\n\\nРедактор рисования и покадровой 2D-анимации.\\n\\nАвтор и разработчик: TheLucassDen\\n\\nСоздано для художников, аниматоров и авторов независимых проектов.",bg=PANEL,fg=TEXT,justify="center",font=("Segoe UI",11)).pack(padx=35,pady=12)
-        ttk.Button(win,text="Закрыть",command=win.destroy).pack(pady=(5,20))
+        win=tk.Toplevel(self.root);win.title("Авторы FRAMEFORGE");win.geometry("520x480")
+        win.configure(bg="#111827");win.resizable(False,False);win.transient(self.root)
+        card=tk.Frame(win,bg="#1a2638",highlightthickness=1,highlightbackground="#395476");card.pack(fill="both",expand=True,padx=22,pady=22)
+        tk.Label(card,text="✦",bg="#1a2638",fg="#82baff",font=("Segoe UI",34,"bold")).pack(pady=(24,0))
+        tk.Label(card,text="FRAMEFORGE",bg="#1a2638",fg="#f4f7ff",font=("Segoe UI",24,"bold")).pack(pady=2)
+        tk.Label(card,text=f"Версия {VERSION}  •  2D Drawing & Animation",bg="#1a2638",fg="#91a6c3",font=("Segoe UI",9)).pack()
+        tk.Frame(card,bg="#344a67",height=1).pack(fill="x",padx=35,pady=20)
+        tk.Label(card,text="Создатель и автор проекта",bg="#1a2638",fg="#9db0ca",font=("Segoe UI",9)).pack()
+        tk.Label(card,text="TheLucassDen",bg="#1a2638",fg="#8fc0ff",font=("Segoe UI",17,"bold")).pack(pady=4)
+        tk.Label(card,text="Программа для художников, аниматоров и авторов независимых проектов.\nСоздавай свои миры — кадр за кадром.",bg="#1a2638",fg="#d3ddec",
+                 font=("Segoe UI",10),justify="center",wraplength=410).pack(pady=12)
+        tk.Button(card,text="Закрыть",command=win.destroy,bg="#26374f",fg="white",activebackground="#344d70",
+                  relief="flat",padx=30,pady=9,cursor="hand2").pack(pady=16)
 
 class FrameForgeSplash:
     """Visible startup screen hosted by the root window (not a hidden-root Toplevel)."""
