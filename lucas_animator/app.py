@@ -208,8 +208,81 @@ class FrameForge:
     def size_changed(self, v): self.size_label.config(text=f"{int(float(v))} px")
     def opacity_changed(self, v): self.opacity_label.config(text=f"{int(float(v))}%")
     def pick(self):
-        c = colorchooser.askcolor(self.color, title="Цвет кисти")[1]
-        if c: self.color = c; self.swatch.config(bg=c)
+        win=tk.Toplevel(self.root)
+        win.title("Выбор цвета")
+        win.configure(bg=PANEL)
+        win.resizable(False,False)
+        win.transient(self.root)
+        win.grab_set()
+        hue=tk.DoubleVar(value=0)
+        sat=tk.DoubleVar(value=1)
+        val=tk.DoubleVar(value=1)
+        try:
+            import colorsys
+            rr,gg,bb=(int(self.color[i:i+2],16)/255 for i in (1,3,5))
+            h,s,v=colorsys.rgb_to_hsv(rr,gg,bb)
+            hue.set(h*360); sat.set(s); val.set(v)
+        except Exception: pass
+        wheel=tk.Canvas(win,width=330,height=330,bg=PANEL,highlightthickness=0)
+        wheel.grid(row=0,column=0,rowspan=4,padx=12,pady=12)
+        preview=tk.Canvas(win,width=90,height=60,bg=self.color,highlightthickness=0)
+        preview.grid(row=0,column=1,padx=12,pady=(20,5))
+        hexvar=tk.StringVar(value=self.color.upper())
+        ttk.Entry(win,textvariable=hexvar,width=12).grid(row=1,column=1,padx=12,pady=4)
+        result={"color":None}
+        def draw():
+            import colorsys, math
+            wheel.delete("all")
+            cx=cy=165
+            # Hue ring with many small colored arc segments
+            for deg in range(360):
+                rgb=colorsys.hsv_to_rgb(deg/360,1,1)
+                col="#%02x%02x%02x"%tuple(int(x*255) for x in rgb)
+                wheel.create_arc(cx-145,cy-145,cx+145,cy+145,start=deg,extent=1.4,
+                                 style="arc",outline=col,width=18)
+            # Saturation/value field, clipped visually inside the hue ring
+            base=colorsys.hsv_to_rgb(hue.get()/360,1,1)
+            huecol="#%02x%02x%02x"%tuple(int(x*255) for x in base)
+            wheel.create_rectangle(65,65,265,265,fill=huecol,outline="#d9e0ec",width=1)
+            # White-to-hue horizontal and black vertical overlays
+            for step in range(100):
+                x0=65+step*2
+                ratio=step/99
+                col="#%02x%02x%02x"%tuple(int(255*(1-ratio)+base[i]*255*ratio) for i in range(3))
+                wheel.create_line(x0,66,x0,264,fill=col,width=2)
+            for step in range(100):
+                y0=65+step*2
+                shade=1-step/99
+                wheel.create_line(66,y0,264,y0,fill="#%02x%02x%02x"%(int(255*shade),int(255*shade),int(255*shade)),width=2)
+            x=65+sat.get()*200; y=265-val.get()*200
+            wheel.create_oval(x-6,y-6,x+6,y+6,outline="white",width=2)
+            wheel.create_oval(x-3,y-3,x+3,y+3,outline="#161a22",width=1)
+            rgb=colorsys.hsv_to_rgb(hue.get()/360,sat.get(),val.get())
+            color="#%02x%02x%02x"%tuple(int(k*255) for k in rgb)
+            preview.configure(bg=color); hexvar.set(color.upper())
+        def pick_hue(event):
+            import math
+            dx=event.x-165; dy=event.y-165
+            radius=math.hypot(dx,dy)
+            if 130<=radius<=158:
+                hue.set((math.degrees(math.atan2(-dy,dx))%360))
+                draw()
+            elif 65<=event.x<=265 and 65<=event.y<=265:
+                sat.set(max(0,min(1,(event.x-65)/200)))
+                val.set(max(0,min(1,(265-event.y)/200)))
+                draw()
+        wheel.bind("<Button-1>",pick_hue)
+        wheel.bind("<B1-Motion>",pick_hue)
+        def accept():
+            color=hexvar.get().strip()
+            if len(color)==7 and color.startswith("#"):
+                result["color"]=color
+                self.set_color(color)
+                win.destroy()
+            else: messagebox.showerror(APP_NAME,"Введите цвет в формате #RRGGBB",parent=win)
+        ttk.Button(win,text="Выбрать этот цвет",style="Accent.TButton",command=accept).grid(row=2,column=1,padx=12,pady=8)
+        ttk.Button(win,text="Отмена",command=win.destroy).grid(row=3,column=1,padx=12,pady=(0,15))
+        draw()
 
     def set_color(self, color):
         self.color = color
