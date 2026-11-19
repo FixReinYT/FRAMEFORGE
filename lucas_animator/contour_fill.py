@@ -1,77 +1,132 @@
-"""Contour-aware raster fill for FRAMEFORGE. Pillow-only implementation."""
-from PIL import Image, ImageDraw, ImageFilter, ImageChops
+"""Topology-aware flood fill for FRAMEFORGE's raster animation editor.
+
+The source image is read-only. The region mask is temporary; optional gap closing
+is never written back to the line-art layer.
+"""
+from collections import deque
+from PIL import Image, ImageChops, ImageFilter
 
 
-def _barrier(source, threshold=90):
-    """Detect visible ink on transparent or light-paper drawings."""
-    rgba=source.convert("RGBA")
-    alpha=rgba.getchannel("A")
-    rgb=rgba.convert("RGB")
-    gray=rgb.convert("L")
-    # Transparent canvases: alpha is the contour; opaque paper: dark pixels are ink.
-    lo,hi=alpha.getextrema()
-    if lo < 255:
-        return alpha.point(lambda a: 255 if a >= threshold else 0)
-    return gray.point(lambda v: 255 if v < 225 else 0)
+def _ink_masks(source, threshold=32):
+    """Return a binary contour barrier and a soft mask retaining AA ink opacity."""
+    rgba = source.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    gray = rgba.convert("RGB").convert("L")
+    a = alpha.tobytes()
+    g = gray.tobytes()
+    # Dark, sufficiently opaque pixels form barriers. This works for both
+    # transparent canvases and white-paper backgrounds.
+    strength = bytes((aa * (255 - lum)) // 255 for aa, lum in zip(a, g))
+    soft = Image.frombytes("L", source.size, strength)
+    barrier = soft.point(lambda p: 255 if p >= threshold else 0)
+    return barrier, soft
 
 
-def flood_region(source, seed, gap=0, threshold=90):
-    """Return selected region mask and original ink mask, without changing source."""
-    w,h=source.size
-    x,y=map(int,seed)
-    if not (0<=x<w and 0<=y<h):
-        return None,None
-    ink=_barrier(source,threshold)
-    gap=max(0,min(12,int(gap)))
-    # Morphological closing is only used to determine the enclosed region.
-    # It never paints or changes the line artwork.
-    if gap:
-        k=2*gap+1
-        ink=ink.filter(ImageFilter.MaxFilter(k)).filter(ImageFilter.MinFilter(k))
-    barrier=ink.point(lambda p:255 if p else 0)
-    if barrier.getpixel((x,y)):
-        # Allow a click on the edge to reach the nearest open pixel.
-        found=None
-        for radius in range(1,9):
-            for dx,dy in ((0,-radius),(radius,0),(0,radius),(-radius,0)):
-                xx,yy=x+dx,y+dy
-                if 0<=xx<w and 0<=yy<h and not barrier.getpixel((xx,yy)):
-                    found=(xx,yy);break
-            if found:break
-        if found is None:return None,None
-        x,y=found
-    available=barrier.point(lambda p:0 if p else 255)
-    ImageDraw.floodfill(available,(x,y),128,thresh=0)
-    region=available.point(lambda p:255 if p==128 else 0)
-    if not region.getbbox():return None,None
-    return region,_barrier(source,threshold)
+def _close_temporary_gaps(barrier, gap):
+    gap = max(0, min(12, int(gap)))
+    if not gap:
+        return barrier
+    # Closing is exclusively for region detection. The source artwork is untouched.
+    size = gap * 2 + 1
+    return barrier.filter(ImageFilter.MaxFilter(size)).filter(ImageFilter.MinFilter(size))
 
 
-def apply_fill(target, source, seed, color, gap=0, threshold=90, separate=False):
-    """Fill behind original ink, with local 1px underpaint and no external fringe.
+def flood_region(source, seed, gap=0, threshold=32):
+    """Return (selected-region mask, soft ink mask), or (None, None)."""
+    width, height = source.size
+    x, y = int(seed[0]), int(seed[1])
+    if not (0 <= x < width and 0 <= y < height):
+        return None, None
 
-    Returns a new RGBA image; callers decide when to record an undo snapshot.
+    original_barrier, soft_ink = _ink_masks(source, threshold)
+    barrier = _close_temporary_gaps(original_barrier, gap)
+    barrier_bytes = barrier.tobytes()
+    start = y * width + x
+
+    # A click on a contour pixel is redirected to the closest non-contour pixel.
+    if barrier_bytes[start]:
+        candidate = None
+        for radius in range(1, 5):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if max(abs(dx), abs(dy)) != radius:
+                        continue
+                    xx, yy = x + dx, y + dy
+                    if 0 <= xx < width and 0 <= yy < height:
+                        pos = yy * width + xx
+                        if not barrier_bytes[pos]:
+                            candidate = pos
+                            break
+                if candidate is not None:
+                    break
+            if candidate is not None:
+                break
+        if candidate is None:
+            return None, None
+        start = candidate
+
+    # Scanline-independent 4-connected flood. Open internal strokes do not
+    # divide an area unless they actually form a closed boundary.
+    visited = bytearray(width * height)
+    queue = deque([start])
+    visited[start] = 1
+    while queue:
+        pos = queue.popleft()
+        px = pos % width
+        py = pos // width
+        if px and not visited[pos - 1] and not barrier_bytes[pos - 1]:
+            visited[pos - 1] = 1
+            queue.append(pos - 1)
+        if px + 1 < width and not visited[pos + 1] and not barrier_bytes[pos + 1]:
+            visited[pos + 1] = 1
+            queue.append(pos + 1)
+        if py and not visited[pos - width] and not barrier_bytes[pos - width]:
+            visited[pos - width] = 1
+            queue.append(pos - width)
+        if py + 1 < height and not visited[pos + width] and not barrier_bytes[pos + width]:
+            visited[pos + width] = 1
+            queue.append(pos + width)
+
+    mask = Image.frombytes("L", source.size,
+                           bytes(255 if value else 0 for value in visited))
+    if mask.getbbox() is None:
+        return None, None
+    return mask, soft_ink
+
+
+def _underpaint_mask(region, soft_ink):
+    """Extend fill only beneath the antialiased inner edge of the contour."""
+    expanded = region.filter(ImageFilter.MaxFilter(3))
+    # Only pixels belonging to the soft contour can be added. This prevents
+    # dilation from escaping the outline and creating an exterior color fringe.
+    return ImageChops.lighter(region, ImageChops.multiply(expanded, soft_ink))
+
+
+def apply_fill(target, source, seed, color, gap=0, threshold=32, separate=False):
+    """Return a new layer image after one atomic fill operation.
+
+    separate=True writes paint to the active layer using source as read-only line art.
+    Otherwise the fill and preserved line art are composited on the active layer.
     """
-    region,ink=flood_region(source,seed,gap,threshold)
-    if region is None:return None
-    # Underpaint the antialiased inside edge by one pixel; preserve closed neighbors.
-    enlarged=region.filter(ImageFilter.MaxFilter(3))
-    # Only expand onto ink pixels, never into another open region.
-    under=ImageChops.multiply(enlarged,ink)
-    region=ImageChops.lighter(region,under)
-    fill=Image.new("RGBA",target.size,color)
+    region, soft_ink = flood_region(source, seed, gap=gap, threshold=threshold)
+    if region is None:
+        return None
+
+    paint_mask = _underpaint_mask(region, soft_ink)
+    fill = Image.new("RGBA", target.size, tuple(color))
+
     if separate:
-        out=target.copy()
-        out.paste(fill,(0,0),region)
-        return out
-    # Same-layer fill: retain the contour and its fractional-alpha antialiasing.
-    # For opaque paper, only restore detected ink, not the white background.
-    out=target.copy()
-    out.paste(fill,(0,0),region)
-    original=target.convert("RGBA")
-    stroke=original.copy()
-    # Preserve semitransparent edge pixels around the detected ink.
-    edge=ink.filter(ImageFilter.MaxFilter(3))
-    stroke.putalpha(ImageChops.multiply(original.getchannel("A"),edge))
-    out.paste(original,(0,0),edge)
-    return out
+        # The active paint layer receives only fill. Source line-art is never edited.
+        output = target.convert("RGBA").copy()
+        output.paste(fill, (0, 0), paint_mask)
+        return output
+
+    # Same-layer mode: apply fill, then alpha-composite the original antialiased
+    # ink back over it. Non-ink artwork outside the chosen region is retained.
+    original = target.convert("RGBA")
+    output = original.copy()
+    output.paste(fill, (0, 0), paint_mask)
+    ink_layer = original.copy()
+    ink_layer.putalpha(soft_ink)
+    output.alpha_composite(ink_layer)
+    return output
