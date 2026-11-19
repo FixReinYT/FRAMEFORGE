@@ -13,7 +13,7 @@ class ContourFillTests(unittest.TestCase):
         out = apply_fill(line, line, (15, 40), (240, 180, 120, 255))
         self.assertEqual(out.getpixel((15, 40))[:3], (240, 180, 120))
         self.assertEqual(out.getpixel((40, 38))[3], 0)
-        self.assertEqual(out.getpixel((20, 18))[:3], (0, 0, 0))
+        self.assertEqual(out.getpixel((21, 19))[:3], (0, 0, 0))
         self.assertEqual(out.getpixel((0, 0))[3], 0)
         # An open interior stroke does not wall off the surrounding face.
         self.assertEqual(out.getpixel((15, 25))[:3], (240, 180, 120))
