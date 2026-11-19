@@ -70,6 +70,8 @@ def apply_fill(target, source, seed, color, gap=0, threshold=90, separate=False)
     out.paste(fill,(0,0),region)
     original=target.convert("RGBA")
     stroke=original.copy()
-    stroke.putalpha(ImageChops.multiply(original.getchannel("A"),ink))
+    # Preserve semitransparent edge pixels around the detected ink.
+    edge=ink.filter(ImageFilter.MaxFilter(3))
+    stroke.putalpha(ImageChops.multiply(original.getchannel("A"),edge))
     out.alpha_composite(stroke)
     return out
