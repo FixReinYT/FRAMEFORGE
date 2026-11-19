@@ -1,9 +1,10 @@
 import json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
+from contour_fill import apply_fill
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
 TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
 
@@ -52,6 +53,9 @@ class FrameForge:
         self.stroke_before, self.shape_start = None, None
         self.stroke_points = []
         self.shape_fill = {"rect":False,"ellipse":False}
+        self.fill_source = tk.StringVar(value="Активный слой")
+        self.fill_gap = tk.IntVar(value=0)
+        self.fill_line_layer = tk.StringVar(value="")
         self.selection_box = None
         self.move_anchor = None
         self.move_image = None
@@ -100,7 +104,7 @@ class FrameForge:
         brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
         tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
         tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.9.0", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
+        tk.Label(brand, text="  0.9.1", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
         ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
         for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
                           ("Экспорт", self.export_menu)]:
@@ -151,6 +155,17 @@ class FrameForge:
             self.tool_buttons[value]=cell
         toolgrid.grid_columnconfigure(0,weight=1); toolgrid.grid_columnconfigure(1,weight=1)
         self.update_tool_buttons()
+        self.section(left, "Заливка • контуры")
+        ttk.Label(left,text="Источник границ").pack(anchor="w",padx=10)
+        self.fill_source_choice=ttk.Combobox(left,textvariable=self.fill_source,
+            values=["Активный слой","Другой слой"],state="readonly",width=19)
+        self.fill_source_choice.pack(fill="x",padx=10,pady=3)
+        ttk.Label(left,text="Слой с контуром").pack(anchor="w",padx=10)
+        self.fill_layer_choice=ttk.Combobox(left,textvariable=self.fill_line_layer,state="readonly",width=19)
+        self.fill_layer_choice.pack(fill="x",padx=10,pady=3)
+        ttk.Label(left,text="Допустимый зазор (0–12 px)").pack(anchor="w",padx=10)
+        ttk.Spinbox(left,from_=0,to=12,textvariable=self.fill_gap,width=8).pack(anchor="w",padx=10,pady=3)
+        ttk.Label(left,text="0 = без замыкания; линии не изменяются",wraplength=180).pack(anchor="w",padx=10,pady=3)
         self.section(left, "Параметры")
         row = tk.Frame(left, bg=PANEL); row.pack(fill="x", padx=12, pady=4)
         tk.Label(row, text="Цвет", bg=PANEL, fg=MUTED).pack(side="left")
@@ -395,6 +410,12 @@ class FrameForge:
             self.layer_list.insert("end",("● " if layer["visible"] else "○ ")+layer["name"])
         self.active_layer=max(0,min(self.active_layer,len(self.layer_frames[self.index])-1))
         self.layer_list.selection_set(self.active_layer)
+        if hasattr(self,"fill_layer_choice"):
+            options=[f"{i}: {l['name']}" for i,l in enumerate(self.layer_frames[self.index])]
+            self.fill_layer_choice.configure(values=options)
+            if self.fill_line_layer.get() not in options:
+                candidates=[v for i,v in enumerate(options) if i!=self.active_layer]
+                self.fill_line_layer.set(candidates[0] if candidates else "")
 
     def select_layer(self,event=None):
         selection=self.layer_list.curselection()
@@ -587,9 +608,29 @@ class FrameForge:
             if col[3]: self.color="#%02x%02x%02x"%col[:3]; self.swatch.config(bg=self.color)
             return
         if tool=="fill":
+            layers=self.layer_frames[self.index]
+            separate=self.fill_source.get()=="Другой слой"
+            source=self.active_image()
+            if separate:
+                selected=self.fill_line_layer.get()
+                try:source_index=int(selected.split(":",1)[0])
+                except (ValueError,IndexError):
+                    messagebox.showwarning(APP_NAME,"Выбери слой с контуром.");return
+                if source_index==self.active_layer:
+                    messagebox.showwarning(APP_NAME,"Для раздельной раскраски выбери другой слой с линиями.");return
+                if not 0<=source_index<len(layers):return
+                source=layers[source_index]["image"]
+            try:
+                output=apply_fill(self.active_image(),source,p,self.rgba(),
+                    gap=self.fill_gap.get(),separate=separate)
+            except Exception as exc:
+                messagebox.showerror(APP_NAME,"Ошибка заливки: "+str(exc));return
+            if output is None:
+                self.status.set("Область заливки не найдена");return
             self.snapshot()
-            ImageDraw.floodfill(self.active_image(),p,self.rgba(),thresh=20)
-            self.compose_frame(self.index); self.render(); return
+            layers[self.active_layer]["image"]=output
+            self.compose_frame(self.index);self.render()
+            self.status.set("Область закрашена");return
         self.snapshot()
         self.last=p; self.shape_start=p; self.stroke_points=[p]
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
