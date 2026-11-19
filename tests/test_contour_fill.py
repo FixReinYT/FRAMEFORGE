@@ -16,7 +16,7 @@ class ContourFillTests(unittest.TestCase):
         self.assertEqual(out.getpixel((20, 18))[:3], (0, 0, 0))
         self.assertEqual(out.getpixel((0, 0))[3], 0)
         # An open interior stroke does not wall off the surrounding face.
-        self.assertEqual(out.getpixel((24, 22))[:3], (240, 180, 120))
+        self.assertEqual(out.getpixel((15, 25))[:3], (240, 180, 120))
 
     def test_separate_layer_does_not_mutate_line_art_or_target(self):
         line = Image.new("RGBA", (60, 60), (0, 0, 0, 0))
@@ -33,8 +33,8 @@ class ContourFillTests(unittest.TestCase):
     def test_small_gap_only_changes_region_calculation(self):
         line = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         d = ImageDraw.Draw(line)
-        d.line([(8, 8), (54, 8), (54, 54), (8, 54), (8, 8)], fill="black", width=2)
-        d.point((30, 8), fill=(0, 0, 0, 0))
+        d.line([(8, 8), (28, 8)], fill="black", width=2)
+        d.line([(32, 8), (54, 8), (54, 54), (8, 54), (8, 8)], fill="black", width=2)
         before = line.tobytes()
         out = apply_fill(Image.new("RGBA", line.size), line, (25, 25),
                          (0, 255, 0, 255), gap=2, separate=True)
