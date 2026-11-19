@@ -73,5 +73,5 @@ def apply_fill(target, source, seed, color, gap=0, threshold=90, separate=False)
     # Preserve semitransparent edge pixels around the detected ink.
     edge=ink.filter(ImageFilter.MaxFilter(3))
     stroke.putalpha(ImageChops.multiply(original.getchannel("A"),edge))
-    out.alpha_composite(stroke)
+    out.paste(original,(0,0),edge)
     return out
