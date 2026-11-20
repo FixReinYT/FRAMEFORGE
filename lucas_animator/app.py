@@ -324,12 +324,19 @@ class FrameForge:
         self.update_tool_buttons()
 
     def update_tool_buttons(self):
+        labels={"pencil":"Карандаш","brush":"Кисть","airbrush":"Аэрограф","eraser":"Ластик",
+                "line":"Линия","rect":"Прямоугольник","ellipse":"Эллипс","triangle":"Треугольник",
+                "select":"Выделение","move":"Перемещение","fill":"Заливка","eyedropper":"Пипетка"}
+        selected=self.tool.get()
+        if hasattr(self,"context_tool_name"):
+            self.context_tool_name.config(text=labels.get(selected,selected))
         for name,widget in getattr(self,"tool_buttons",{}).items():
-            active=name==self.tool.get()
-            widget.configure(bg="#263e5c" if active else ALT,
-                             highlightbackground=ACCENT if active else BORDER)
+            active=name==selected
+            bg="#314b68" if active else "#252d39"
+            widget.configure(bg=bg,highlightbackground="#79b7f2" if active else "#354153")
             for child in widget.winfo_children():
-                child.configure(bg="#263e5c" if active else ALT)
+                try: child.configure(bg=bg)
+                except tk.TclError: pass
 
     def draw_tool_icon(self,canvas,name):
         fg="#e8edf5"; accent="#72b7ff"
