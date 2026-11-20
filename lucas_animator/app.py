@@ -4,9 +4,9 @@ from PIL import Image, ImageDraw, ImageTk, ImageSequence
 from contour_fill import apply_fill
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.9.1"
-BG, PANEL, ALT, BORDER = "#171b24", "#202633", "#252d3b", "#354052"
-TEXT, MUTED, ACCENT = "#e8edf5", "#9aa8bb", "#4f9cf9"
+VERSION = "0.10.0"
+BG, PANEL, ALT, BORDER = "#202630", "#293342", "#303b4b", "#3b485b"
+TEXT, MUTED, ACCENT = "#e8edf5", "#a5b2c5", "#68a9e8"
 
 PRESETS = {
     "Квадрат 512 × 512": (512, 512),
@@ -100,159 +100,215 @@ class FrameForge:
         ttk.Label(parent, text=title.upper(), style="Section.TLabel").pack(anchor="w", padx=12, pady=(13, 6))
 
     def build(self):
-        header = tk.Frame(self.root, bg="#11151d", height=60); header.pack(fill="x"); header.pack_propagate(False)
-        brand = tk.Frame(header, bg="#11151d"); brand.pack(side="left", padx=16)
-        tk.Label(brand, text="FRAME", bg="#11151d", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="FORGE", bg="#11151d", fg=ACCENT, font=("Segoe UI", 16, "bold")).pack(side="left")
-        tk.Label(brand, text="  0.9.2", bg="#11151d", fg=MUTED).pack(side="left", padx=6)
-        ttk.Button(header,text="⌂ Главное меню",command=self.return_to_menu).pack(side="left",padx=4,pady=12)
-        for label, fn in [("Новый", self.new), ("Открыть", self.open), ("Вставить изображение", self.insert_image), ("Сохранить", self.save),
-                          ("Экспорт", self.export_menu)]:
-            ttk.Button(header, text=label, command=fn).pack(side="left", padx=4, pady=12)
-        ttk.Button(header, text="↶ Отмена", command=self.undo).pack(side="left", padx=(18, 3), pady=12)
-        ttk.Button(header, text="↷ Повтор", command=self.redo).pack(side="left", padx=3, pady=12)
-        ttk.Button(header, text="⛶ Во весь экран (F11)", command=self.toggle_fullscreen).pack(side="right", padx=8, pady=12)
-        tk.Label(header, text="2D ANIMATION WORKSPACE", bg="#11151d", fg="#718096").pack(side="right", padx=16)
+        # Krita-inspired dock workspace: compact menu, vertical tools, canvas,
+        # contextual right dockers and a full-width animation timeline.
+        self.root.configure(bg="#202630")
+        menubar=tk.Menu(self.root,tearoff=0,bg="#252d39",fg=TEXT,
+                        activebackground="#365575",activeforeground="white")
+        file_menu=tk.Menu(menubar,tearoff=0)
+        for label,fn in [("Новый проект",self.new),("Открыть…",self.open),
+                         ("Вставить изображение…",self.insert_image),("Сохранить",self.save),
+                         ("Экспорт…",self.export_menu),("Главное меню",self.return_to_menu)]:
+            file_menu.add_command(label=label,command=fn)
+        file_menu.add_separator();file_menu.add_command(label="Выход",command=self.root.destroy)
+        menubar.add_cascade(label="Файл",menu=file_menu)
+        edit=tk.Menu(menubar,tearoff=0)
+        edit.add_command(label="Отменить  Ctrl+Z",command=self.undo)
+        edit.add_command(label="Повторить  Ctrl+U",command=self.redo)
+        menubar.add_cascade(label="Правка",menu=edit)
+        image_menu=tk.Menu(menubar,tearoff=0)
+        image_menu.add_command(label="Отразить слой по горизонтали",command=self.flip_layer_horizontal)
+        image_menu.add_command(label="Отразить слой по вертикали",command=self.flip_layer_vertical)
+        menubar.add_cascade(label="Изображение",menu=image_menu)
+        layer_menu=tk.Menu(menubar,tearoff=0)
+        layer_menu.add_command(label="Добавить слой",command=self.add_layer)
+        layer_menu.add_command(label="Удалить слой",command=self.delete_layer)
+        layer_menu.add_command(label="Переместить слой вверх",command=lambda:self.move_layer(-1))
+        layer_menu.add_command(label="Переместить слой вниз",command=lambda:self.move_layer(1))
+        menubar.add_cascade(label="Слой",menu=layer_menu)
+        frame_menu=tk.Menu(menubar,tearoff=0)
+        frame_menu.add_command(label="Добавить кадр",command=self.add)
+        frame_menu.add_command(label="Дублировать кадр",command=self.duplicate)
+        frame_menu.add_command(label="Удалить кадр",command=self.delete)
+        menubar.add_cascade(label="Кадр",menu=frame_menu)
+        animation_menu=tk.Menu(menubar,tearoff=0)
+        animation_menu.add_command(label="Воспроизвести / остановить",command=self.play)
+        animation_menu.add_command(label="Экспорт анимации",command=self.export_menu)
+        menubar.add_cascade(label="Анимация",menu=animation_menu)
+        view_menu=tk.Menu(menubar,tearoff=0)
+        view_menu.add_command(label="Во весь экран  F11",command=self.toggle_fullscreen)
+        view_menu.add_command(label="Сбросить масштаб",command=lambda:self.zoom_at(self.canvas.winfo_width()//2,self.canvas.winfo_height()//2,1.0/self.zoom))
+        menubar.add_cascade(label="Вид",menu=view_menu)
+        self.root.configure(menu=menubar)
 
-        work = tk.Frame(self.root, bg=BG); work.pack(fill="both", expand=True, padx=9, pady=8)
-        left_outer = self.panel(work, 210); left_outer.pack(side="left", fill="y")
-        left_outer.pack_propagate(False)
-        left_canvas = tk.Canvas(left_outer,bg=PANEL,highlightthickness=0,width=190)
-        left_scroll = ttk.Scrollbar(left_outer,orient="vertical",command=left_canvas.yview)
-        left_canvas.configure(yscrollcommand=left_scroll.set)
-        left_scroll.pack(side="right",fill="y")
-        left_canvas.pack(side="left",fill="both",expand=True)
-        left = tk.Frame(left_canvas,bg=PANEL)
-        left_window = left_canvas.create_window((0,0),window=left,anchor="nw")
-        def _sync_left_scroll(_event=None):
-            left_canvas.configure(scrollregion=left_canvas.bbox("all"))
-            left_canvas.itemconfigure(left_window,width=left_canvas.winfo_width())
-        left.bind("<Configure>",_sync_left_scroll)
-        left_canvas.bind("<Configure>",_sync_left_scroll)
-        def _left_wheel(event):
-            left_canvas.yview_scroll(int(-1*(event.delta/120)),"units")
-            return "break"
-        left_canvas.bind("<MouseWheel>",_left_wheel)
-        left_canvas.bind("<Button-4>",lambda e:left_canvas.yview_scroll(-1,"units"))
-        left_canvas.bind("<Button-5>",lambda e:left_canvas.yview_scroll(1,"units"))
-        self.section(left, "Инструменты")
-        tools = [("✎ Карандаш","pencil"),("● Кисть","brush"),("◌ Аэрограф","airbrush"),
-                 ("▱ Ластик","eraser"),("／ Линия","line"),("□ Прямоуг.","rect"),
-                 ("○ Эллипс","ellipse"),("△ Треугол.","triangle"),("↖ Выделение","select"),("✥ Перемещение","move"),("▨ Заливка","fill"),("⌖ Пипетка","eyedropper")]
-        toolgrid=tk.Frame(left,bg=PANEL); toolgrid.pack(fill="x",padx=6)
+        top=tk.Frame(self.root,bg="#171d27",height=48);top.pack(fill="x");top.pack_propagate(False)
+        brand=tk.Frame(top,bg="#171d27");brand.pack(side="left",padx=(14,20))
+        tk.Label(brand,text="FRAME",bg="#171d27",fg="#edf3fb",font=("Segoe UI",15,"bold")).pack(side="left")
+        tk.Label(brand,text="FORGE",bg="#171d27",fg="#77b5f5",font=("Segoe UI",15,"bold")).pack(side="left")
+        tk.Label(brand,text="  0.10",bg="#171d27",fg="#8190a5",font=("Segoe UI",8,"bold")).pack(side="left",pady=(8,0))
+        ttk.Button(top,text="Открыть",command=self.open).pack(side="left",padx=3,pady=7)
+        ttk.Button(top,text="Сохранить",command=self.save,style="Accent.TButton").pack(side="left",padx=3,pady=7)
+        ttk.Button(top,text="↶",width=3,command=self.undo).pack(side="left",padx=(15,2),pady=7)
+        ttk.Button(top,text="↷",width=3,command=self.redo).pack(side="left",padx=2,pady=7)
+        tk.Label(top,text="2D ANIMATION WORKSPACE",bg="#171d27",fg="#8494aa",
+                 font=("Segoe UI",8,"bold")).pack(side="right",padx=14)
+        ttk.Button(top,text="⛶",width=3,command=self.toggle_fullscreen).pack(side="right",padx=8,pady=7)
+
+        # Context toolbar: controls stay visible while the user draws.
+        context=tk.Frame(self.root,bg="#293342",height=38);context.pack(fill="x");context.pack_propagate(False)
+        tk.Label(context,text="ИНСТРУМЕНТ",bg="#293342",fg="#8fa1b8",
+                 font=("Segoe UI",8,"bold")).pack(side="left",padx=(13,8))
+        self.context_tool_name=tk.Label(context,text="Кисть",bg="#293342",fg="#e6edf7",
+                                        font=("Segoe UI",9,"bold"))
+        self.context_tool_name.pack(side="left",padx=(0,18))
+        tk.Label(context,text="Размер",bg="#293342",fg="#aebbd0").pack(side="left")
+        self.size_label=tk.Label(context,text="8 px",bg="#293342",fg="#edf3fb",width=6)
+        self.size_label.pack(side="left",padx=4)
+        ttk.Scale(context,from_=1,to=100,variable=self.size,command=self.size_changed,length=125).pack(side="left",padx=3)
+        tk.Label(context,text="Непрозрачность",bg="#293342",fg="#aebbd0").pack(side="left",padx=(16,3))
+        self.opacity_label=tk.Label(context,text="100%",bg="#293342",fg="#edf3fb",width=5)
+        self.opacity_label.pack(side="left")
+        ttk.Scale(context,from_=1,to=100,variable=self.opacity,command=self.opacity_changed,length=115).pack(side="left",padx=3)
+        tk.Label(context,text="Цвет",bg="#293342",fg="#aebbd0").pack(side="left",padx=(16,5))
+        self.swatch=tk.Button(context,bg=self.color,width=3,relief="flat",command=self.pick,
+                              activebackground=self.color)
+        self.swatch.pack(side="left",pady=5)
+        tk.Label(context,text="Колесо: масштаб  •  Средняя кнопка: перемещение холста",
+                 bg="#293342",fg="#8192a8",font=("Segoe UI",8)).pack(side="right",padx=14)
+
+        work=tk.Frame(self.root,bg="#202630");work.pack(fill="both",expand=True,padx=7,pady=7)
+        # Narrow icon-only toolbox on the left.
+        left=tk.Frame(work,bg="#252d39",width=58,highlightthickness=1,highlightbackground="#354153")
+        left.pack(side="left",fill="y");left.pack_propagate(False)
+        tools=[("pencil","Карандаш"),("brush","Кисть"),("airbrush","Аэрограф"),
+               ("eraser","Ластик"),("line","Линия"),("rect","Прямоугольник"),
+               ("ellipse","Эллипс"),("triangle","Треугольник"),("select","Выделение"),
+               ("move","Перемещение"),("fill","Заливка"),("eyedropper","Пипетка")]
         self.tool_buttons={}
-        for n,(label,value) in enumerate(tools):
-            cell=tk.Frame(toolgrid,bg=ALT,highlightthickness=1,highlightbackground=BORDER)
-            cell.grid(row=n//2,column=n%2,sticky="nsew",padx=2,pady=2)
-            icon=tk.Canvas(cell,width=38,height=30,bg=ALT,highlightthickness=0)
-            icon.pack(pady=(3,0))
+        for value,label in tools:
+            cell=tk.Frame(left,bg="#252d39",highlightthickness=1,highlightbackground="#354153",height=43)
+            cell.pack(fill="x",padx=4,pady=2);cell.pack_propagate(False)
+            icon=tk.Canvas(cell,width=38,height=32,bg="#252d39",highlightthickness=0)
+            icon.place(relx=.5,rely=.5,anchor="center")
             self.draw_tool_icon(icon,value)
-            tk.Label(cell,text=label.split(" ",1)[-1],bg=ALT,fg=TEXT,font=("Segoe UI",8)).pack(pady=(0,4))
             for widget in (cell,icon):
                 widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
+                widget.bind("<Enter>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2"))
+                widget.bind("<Leave>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2" if self.tool.get()==value else "#354153"))
                 if value in ("rect","ellipse"):
                     widget.bind("<Button-3>",lambda e,v=value:self.shape_options(v))
             self.tool_buttons[value]=cell
-        toolgrid.grid_columnconfigure(0,weight=1); toolgrid.grid_columnconfigure(1,weight=1)
+        tk.Frame(left,bg="#3a4658",height=1).pack(fill="x",padx=8,pady=8)
+        tk.Label(left,text="FG",bg="#252d39",fg="#aab8ca",font=("Segoe UI",8,"bold")).pack()
+        self.mini_swatch=tk.Button(left,bg=self.color,width=3,relief="flat",command=self.pick)
+        self.mini_swatch.pack(pady=4)
         self.update_tool_buttons()
-        self.section(left, "Заливка • контуры")
-        ttk.Label(left,text="Источник границ").pack(anchor="w",padx=10)
-        self.fill_source_choice=ttk.Combobox(left,textvariable=self.fill_source,
-            values=["Активный слой","Другой слой"],state="readonly",width=19)
+
+        center=tk.Frame(work,bg="#202630");center.pack(side="left",fill="both",expand=True,padx=7)
+        head=tk.Frame(center,bg="#293342",height=34);head.pack(fill="x");head.pack_propagate(False)
+        tk.Label(head,text="ХОЛСТ",bg="#293342",fg="#e5edf8",
+                 font=("Segoe UI",9,"bold")).pack(side="left",padx=12)
+        self.canvas_info=tk.Label(head,text="1280 × 720  •  100%",bg="#293342",fg="#aab9ce")
+        self.canvas_info.pack(side="right",padx=12)
+        shell=tk.Frame(center,bg="#171d27",padx=8,pady=8,
+                       highlightthickness=1,highlightbackground="#354153")
+        shell.pack(fill="both",expand=True,pady=(5,0))
+        self.canvas=tk.Canvas(shell,bg="#202630",highlightthickness=0,cursor="crosshair")
+        self.canvas.pack(fill="both",expand=True)
+        self.canvas.bind("<Configure>",self.on_canvas_resize)
+        self.canvas.bind("<Button-1>",self.start)
+        self.canvas.bind("<Button-3>",lambda e:self.shape_options(self.tool.get()) if self.tool.get() in ("rect","ellipse") else None)
+        self.canvas.bind("<B1-Motion>",self.drag)
+        self.canvas.bind("<ButtonRelease-1>",self.release)
+        self.canvas.bind("<MouseWheel>",self.zoom_wheel)
+        self.canvas.bind("<Button-4>",lambda e:self.zoom_at(e.x,e.y,1.12))
+        self.canvas.bind("<Button-5>",lambda e:self.zoom_at(e.x,e.y,1/1.12))
+        self.canvas.bind("<ButtonPress-2>",self.pan_start)
+        self.canvas.bind("<B2-Motion>",self.pan_drag)
+
+        # Right-side dockers, grouped into tabs like a professional painting workspace.
+        right=self.panel(work,278);right.pack(side="right",fill="y")
+        tabs=ttk.Notebook(right);tabs.pack(fill="both",expand=True,padx=5,pady=5)
+        tooltab=tk.Frame(tabs,bg=PANEL);colortab=tk.Frame(tabs,bg=PANEL)
+        layertab=tk.Frame(tabs,bg=PANEL);animtab=tk.Frame(tabs,bg=PANEL)
+        tabs.add(tooltab,text="Инструмент");tabs.add(colortab,text="Цвет")
+        tabs.add(layertab,text="Слои");tabs.add(animtab,text="Анимация")
+        self.section(tooltab,"Параметры инструмента")
+        tk.Label(tooltab,text="Размер кисти",bg=PANEL,fg=MUTED).pack(anchor="w",padx=12,pady=(8,0))
+        ttk.Scale(tooltab,from_=1,to=100,variable=self.size,command=self.size_changed).pack(fill="x",padx=12)
+        tk.Label(tooltab,text="Непрозрачность",bg=PANEL,fg=MUTED).pack(anchor="w",padx=12,pady=(8,0))
+        ttk.Scale(tooltab,from_=1,to=100,variable=self.opacity,command=self.opacity_changed).pack(fill="x",padx=12)
+        self.section(tooltab,"Заливка • контуры")
+        ttk.Label(tooltab,text="Источник границ").pack(anchor="w",padx=10)
+        self.fill_source_choice=ttk.Combobox(tooltab,textvariable=self.fill_source,
+            values=["Активный слой","Другой слой"],state="readonly")
         self.fill_source_choice.pack(fill="x",padx=10,pady=3)
-        ttk.Label(left,text="Слой с контуром").pack(anchor="w",padx=10)
-        self.fill_layer_choice=ttk.Combobox(left,textvariable=self.fill_line_layer,state="readonly",width=19)
+        ttk.Label(tooltab,text="Слой с контуром").pack(anchor="w",padx=10)
+        self.fill_layer_choice=ttk.Combobox(tooltab,textvariable=self.fill_line_layer,state="readonly")
         self.fill_layer_choice.pack(fill="x",padx=10,pady=3)
-        ttk.Label(left,text="Допустимый зазор (0–12 px)").pack(anchor="w",padx=10)
-        ttk.Spinbox(left,from_=0,to=12,textvariable=self.fill_gap,width=8).pack(anchor="w",padx=10,pady=3)
-        ttk.Label(left,text="0 = без замыкания; линии не изменяются",wraplength=180).pack(anchor="w",padx=10,pady=3)
-        self.section(left, "Параметры")
-        row = tk.Frame(left, bg=PANEL); row.pack(fill="x", padx=12, pady=4)
-        tk.Label(row, text="Цвет", bg=PANEL, fg=MUTED).pack(side="left")
-        self.swatch = tk.Button(row, bg=self.color, width=5, relief="flat", command=self.pick)
-        self.swatch.pack(side="right", ipady=6)
-        self.section(left, "Палитра • цветовые группы")
-        palette = ["#111318","#343941","#626a76","#9ba3af","#dce1e8","#ffffff",
-                   "#5b2028","#a8323e","#e14b59","#ff8290","#f5b4ba","#fce4e6",
-                   "#64351d","#a85b2b","#d88945","#f2b66d","#f6d7a8","#fff0d8",
-                   "#66501c","#a58a2b","#d6bd45","#f1dc75","#f7edb2","#fff9dc",
-                   "#24523b","#347b55","#4ca879","#82c99c","#b7e4c7","#e3f5e9",
-                   "#1d5260","#287f91","#42b5c9","#83d4df","#bcebf0","#e7f8fa",
-                   "#263c70","#365da6","#5884d8","#8eafea","#c3d4f5","#eaf0fc",
-                   "#49316f","#704ca5","#966bd0","#bd9ce8","#d9c5f3","#f1eafa",
-                   "#7b315d","#b34d87","#dc78b0","#eda4cc","#f5cce1","#fceaf3"]
-        pal = tk.Frame(left, bg=PANEL); pal.pack(fill="x", padx=9, pady=3)
-        for i, col in enumerate(palette):
-            b=tk.Button(pal,bg=col,width=1,height=1,relief="flat",bd=0,
+        ttk.Label(tooltab,text="Допустимый зазор (0–12 px)").pack(anchor="w",padx=10)
+        ttk.Spinbox(tooltab,from_=0,to=12,textvariable=self.fill_gap,width=8).pack(anchor="w",padx=10,pady=3)
+        ttk.Label(tooltab,text="Замыкание применяется только при поиске области.",wraplength=235).pack(anchor="w",padx=10,pady=4)
+        ttk.Checkbutton(tooltab,text="Луковая шелуха",variable=self.onion,command=self.render).pack(anchor="w",padx=12,pady=10)
+
+        self.section(colortab,"Основной цвет")
+        colorrow=tk.Frame(colortab,bg=PANEL);colorrow.pack(fill="x",padx=12,pady=8)
+        self.color_preview=tk.Label(colorrow,text=self.color.upper(),bg=self.color,fg="#ffffff",
+                                    font=("Segoe UI",10,"bold"),width=13,height=3)
+        self.color_preview.pack(fill="x")
+        ttk.Button(colortab,text="Выбрать цвет…",command=self.pick,style="Accent.TButton").pack(fill="x",padx=12,pady=6)
+        ttk.Button(colortab,text="Палитра цветов…",command=self.open_color_wheel).pack(fill="x",padx=12,pady=3)
+        self.section(colortab,"Быстрая палитра")
+        palette=["#111318","#343941","#626a76","#9ba3af","#dce1e8","#ffffff",
+                 "#5b2028","#a8323e","#e14b59","#ff8290","#f5b4ba","#fce4e6",
+                 "#64351d","#a85b2b","#d88945","#f2b66d","#f6d7a8","#fff0d8",
+                 "#66501c","#a58a2b","#d6bd45","#f1dc75","#f7edb2","#fff9dc",
+                 "#24523b","#347b55","#4ca879","#82c99c","#b7e4c7","#e3f5e9",
+                 "#1d5260","#287f91","#42b5c9","#83d4df","#bcebf0","#e7f8fa",
+                 "#263c70","#365da6","#5884d8","#8eafea","#c3d4f5","#eaf0fc",
+                 "#49316f","#704ca5","#966bd0","#bd9ce8","#d9c5f3","#f1eafa",
+                 "#7b315d","#b34d87","#dc78b0","#eda4cc","#f5cce1","#fceaf3"]
+        pal=tk.Frame(colortab,bg=PANEL);pal.pack(fill="x",padx=10,pady=5)
+        for i,col in enumerate(palette):
+            b=tk.Button(pal,bg=col,width=2,height=1,relief="flat",bd=0,
                         activebackground=col,command=lambda value=col:self.set_color(value))
             b.grid(row=i//6,column=i%6,padx=2,pady=2,sticky="nsew")
-        for col in range(6): pal.grid_columnconfigure(col,weight=1)
-        ttk.Button(left,text="Выбрать цвет…",command=self.pick).pack(fill="x",padx=10,pady=3)
-        ttk.Button(left,text="Отразить слой ↔",command=self.flip_layer_horizontal).pack(fill="x",padx=10,pady=2)
-        ttk.Button(left,text="Отразить слой ↕",command=self.flip_layer_vertical).pack(fill="x",padx=10,pady=2)
-        tk.Label(left, text="Размер кисти", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12, pady=(8, 0))
-        self.size_label = tk.Label(left, text="8 px", bg=PANEL, fg=TEXT); self.size_label.pack(anchor="e", padx=12)
-        ttk.Scale(left, from_=1, to=100, variable=self.size, command=self.size_changed).pack(fill="x", padx=12)
-        tk.Label(left, text="Непрозрачность", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12, pady=(8, 0))
-        self.opacity_label = tk.Label(left, text="100%", bg=PANEL, fg=TEXT); self.opacity_label.pack(anchor="e", padx=12)
-        ttk.Scale(left, from_=1, to=100, variable=self.opacity, command=self.opacity_changed).pack(fill="x", padx=12)
-        ttk.Checkbutton(left, text="Луковая шелуха", variable=self.onion, command=self.render).pack(anchor="w", padx=12, pady=10)
+        for col in range(6):pal.grid_columnconfigure(col,weight=1)
 
-        center = tk.Frame(work, bg=BG); center.pack(side="left", fill="both", expand=True, padx=8)
-        head = tk.Frame(center, bg=PANEL, height=38); head.pack(fill="x"); head.pack_propagate(False)
-        tk.Label(head, text="ХОЛСТ", bg=PANEL, fg=TEXT).pack(side="left", padx=12)
-        self.canvas_info = tk.Label(head, text="1280 × 720", bg=PANEL, fg=MUTED); self.canvas_info.pack(side="right", padx=12)
-        shell = tk.Frame(center, bg="#11151d", padx=10, pady=10); shell.pack(fill="both", expand=True, pady=(5, 0))
-        self.canvas = tk.Canvas(shell, bg="#171c25", highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", self.on_canvas_resize)
-        self.canvas.bind("<Button-1>", self.start)
-        self.canvas.bind("<Button-3>",lambda e:self.shape_options(self.tool.get()) if self.tool.get() in ("rect","ellipse") else None)
-        self.canvas.bind("<B1-Motion>", self.drag)
-        self.canvas.bind("<ButtonRelease-1>", self.release)
-        self.canvas.bind("<MouseWheel>", self.zoom_wheel)
-        self.canvas.bind("<Button-4>", lambda e:self.zoom_at(e.x,e.y,1.12))
-        self.canvas.bind("<Button-5>", lambda e:self.zoom_at(e.x,e.y,1/1.12))
-        self.canvas.bind("<ButtonPress-2>", self.pan_start)
-        self.canvas.bind("<B2-Motion>", self.pan_drag)
-
-        right = self.panel(work, 205); right.pack(side="right", fill="y")
-        self.section(right, "Анимация • таймлайн")
-        tk.Label(right, text="Кадров в секунду", bg=PANEL, fg=MUTED).pack(anchor="w", padx=12)
-        ttk.Spinbox(right, from_=1, to=60, textvariable=self.fps, width=7).pack(anchor="w", padx=12, pady=5)
-        self.playbtn = ttk.Button(right, text="▶ Воспроизвести", style="Accent.TButton", command=self.play)
-        self.playbtn.pack(fill="x", padx=10, pady=8)
-        self.section(right, "Кадры")
-        for label, fn in [("+ Добавить", self.add), ("▣ Дублировать", self.duplicate), ("− Удалить", self.delete)]:
-            ttk.Button(right, text=label, command=fn).pack(fill="x", padx=10, pady=3)
-        nav = tk.Frame(right, bg=PANEL); nav.pack(fill="x", padx=10, pady=8)
-        ttk.Button(nav, text="←", command=lambda: self.select(self.index-1)).pack(side="left", expand=True, fill="x", padx=2)
-        ttk.Button(nav, text="→", command=lambda: self.select(self.index+1)).pack(side="left", expand=True, fill="x", padx=2)
-        self.counter = tk.Label(right, text="КАДР 1 / 1", bg=PANEL, fg=TEXT, font=("Segoe UI", 11, "bold")); self.counter.pack(pady=10)
-        self.section(right, "Слои • порядок наложения")
-        layerbar=tk.Frame(right,bg=PANEL); layerbar.pack(fill="x",padx=8)
-        ttk.Button(layerbar,text="+",width=3,command=self.add_layer).pack(side="left",expand=True,fill="x",padx=1)
-        ttk.Button(layerbar,text="−",width=3,command=self.delete_layer).pack(side="left",expand=True,fill="x",padx=1)
-        ttk.Button(layerbar,text="↑",width=3,command=lambda:self.move_layer(-1)).pack(side="left",expand=True,fill="x",padx=1)
-        ttk.Button(layerbar,text="↓",width=3,command=lambda:self.move_layer(1)).pack(side="left",expand=True,fill="x",padx=1)
-        ttk.Button(layerbar,text="◉",width=3,command=self.toggle_layer_visibility).pack(side="left",expand=True,fill="x",padx=1)
-        self.layer_list=tk.Listbox(right,height=7,bg=ALT,fg=TEXT,selectbackground="#365a83",relief="flat",highlightthickness=0,exportselection=False)
-        self.layer_list.pack(fill="x",padx=9,pady=5)
+        self.section(layertab,"Слои • порядок наложения")
+        layerbar=tk.Frame(layertab,bg=PANEL);layerbar.pack(fill="x",padx=8)
+        for label,fn in [("+",self.add_layer),("−",self.delete_layer),
+                         ("↑",lambda:self.move_layer(-1)),("↓",lambda:self.move_layer(1)),
+                         ("◉",self.toggle_layer_visibility)]:
+            ttk.Button(layerbar,text=label,width=3,command=fn).pack(side="left",expand=True,fill="x",padx=1)
+        self.layer_list=tk.Listbox(layertab,height=14,bg=ALT,fg=TEXT,selectbackground="#365a83",
+                                   relief="flat",highlightthickness=0,exportselection=False)
+        self.layer_list.pack(fill="both",expand=True,padx=9,pady=7)
         self.layer_list.bind("<<ListboxSelect>>",self.select_layer)
-        ttk.Button(right,text="Залить фон цветом",command=self.fill_background).pack(fill="x",padx=9,pady=3)
-        self.section(right, "История")
-        ttk.Button(right, text="↶ Отменить  Ctrl+Z", command=self.undo).pack(fill="x", padx=10, pady=3)
-        ttk.Button(right, text="↷ Вернуть  Ctrl+U", command=self.redo).pack(fill="x", padx=10, pady=3)
+        ttk.Button(layertab,text="Залить фон цветом",command=self.fill_background).pack(fill="x",padx=9,pady=4)
 
-        timeline = self.panel(self.root); timeline.pack(fill="x", padx=9, pady=(0, 7))
-        th = tk.Frame(timeline, bg=PANEL); th.pack(fill="x")
-        tk.Label(th, text="ТАЙМЛАЙН", bg=PANEL, fg=TEXT, font=("Segoe UI", 9, "bold")).pack(side="left", padx=12, pady=8)
-        self.timeline_hint = tk.Label(th, text="", bg=PANEL, fg=MUTED); self.timeline_hint.pack(side="right", padx=12)
-        self.timeline = tk.Frame(timeline, bg="#1a202b"); self.timeline.pack(fill="x", padx=6, pady=(0, 6))
-        footer = tk.Frame(self.root, bg="#11151d", height=25); footer.pack(fill="x", side="bottom"); footer.pack_propagate(False)
-        tk.Label(footer, textvariable=self.status, bg="#11151d", fg=MUTED).pack(side="left", padx=10)
-        tk.Label(footer, text="FRAMEFORGE • THELUCASSDEN", bg="#11151d", fg="#65748a").pack(side="right", padx=10)
+        self.section(animtab,"Воспроизведение")
+        tk.Label(animtab,text="Кадров в секунду",bg=PANEL,fg=MUTED).pack(anchor="w",padx=12)
+        ttk.Spinbox(animtab,from_=1,to=60,textvariable=self.fps,width=8).pack(anchor="w",padx=12,pady=5)
+        self.playbtn=ttk.Button(animtab,text="▶ Воспроизвести",style="Accent.TButton",command=self.play)
+        self.playbtn.pack(fill="x",padx=10,pady=8)
+        self.section(animtab,"Управление кадрами")
+        for label,fn in [("+ Добавить кадр",self.add),("▣ Дублировать",self.duplicate),("− Удалить кадр",self.delete)]:
+            ttk.Button(animtab,text=label,command=fn).pack(fill="x",padx=10,pady=3)
+        nav=tk.Frame(animtab,bg=PANEL);nav.pack(fill="x",padx=10,pady=8)
+        ttk.Button(nav,text="← Предыдущий",command=lambda:self.select(self.index-1)).pack(side="left",expand=True,fill="x",padx=2)
+        ttk.Button(nav,text="Следующий →",command=lambda:self.select(self.index+1)).pack(side="left",expand=True,fill="x",padx=2)
+        self.counter=tk.Label(animtab,text="КАДР 1 / 1",bg=PANEL,fg=TEXT,font=("Segoe UI",11,"bold"));self.counter.pack(pady=10)
 
+        timeline=self.panel(self.root);timeline.pack(fill="x",padx=7,pady=(0,6))
+        th=tk.Frame(timeline,bg=PANEL);th.pack(fill="x")
+        tk.Label(th,text="ТАЙМЛАЙН КАДРОВ",bg=PANEL,fg=TEXT,font=("Segoe UI",9,"bold")).pack(side="left",padx=12,pady=7)
+        self.timeline_hint=tk.Label(th,text="",bg=PANEL,fg=MUTED);self.timeline_hint.pack(side="right",padx=12)
+        self.timeline=tk.Frame(timeline,bg="#1a202b");self.timeline.pack(fill="x",padx=6,pady=(0,6))
+        footer=tk.Frame(self.root,bg="#171d27",height=24);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
+        tk.Label(footer,textvariable=self.status,bg="#171d27",fg="#aab8ca").pack(side="left",padx=10)
+        tk.Label(footer,text="FRAMEFORGE  •  THELUCASSDEN",bg="#171d27",fg="#71839b",
+                 font=("Segoe UI",8,"bold")).pack(side="right",padx=10)
     def shape_options(self,tool):
         menu=tk.Menu(self.root,tearoff=0)
         menu.add_command(label="Только контур",command=lambda:self.set_shape_fill(tool,False))
