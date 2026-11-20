@@ -1249,7 +1249,7 @@ class FrameForgeSplash:
         c.create_oval(235,139,309,211,fill="#11101a")
         c.create_oval(331,139,405,211,fill="#11101a")
         c.create_oval(260,163,286,189,fill="#42dc88")
-        c.create_oval(354,163,380,189,fill="#4f91df")
+        c.create_oval(354,163,380,189,fill="#a65bff")
         c.create_oval(309,205,331,220,fill="#171321")
         c.create_rectangle(157,250,483,354,fill="#211735",outline="#a65bff",width=5)
         c.create_polygon(157,250,483,250,461,213,135,213,fill="#315f98",outline="#a9ceff",width=3)
