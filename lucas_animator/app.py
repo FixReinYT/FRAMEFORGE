@@ -257,7 +257,7 @@ class FrameForge:
                                     font=("Segoe UI",10,"bold"),width=13,height=3)
         self.color_preview.pack(fill="x")
         ttk.Button(colortab,text="Выбрать цвет…",command=self.pick,style="Accent.TButton").pack(fill="x",padx=12,pady=6)
-        ttk.Button(colortab,text="Палитра цветов…",command=self.open_color_wheel).pack(fill="x",padx=12,pady=3)
+        ttk.Button(colortab,text="Палитра цветов…",command=self.pick).pack(fill="x",padx=12,pady=3)
         self.section(colortab,"Быстрая палитра")
         palette=["#111318","#343941","#626a76","#9ba3af","#dce1e8","#ffffff",
                  "#5b2028","#a8323e","#e14b59","#ff8290","#f5b4ba","#fce4e6",
@@ -446,7 +446,11 @@ class FrameForge:
 
     def set_color(self, color):
         self.color = color
-        self.swatch.config(bg=color)
+        for widget_name in ("swatch","mini_swatch"):
+            widget=getattr(self,widget_name,None)
+            if widget is not None: widget.config(bg=color,activebackground=color)
+        preview=getattr(self,"color_preview",None)
+        if preview is not None: preview.config(bg=color,text=color.upper())
 
     def active_image(self):
         return self.layer_frames[self.index][self.active_layer]["image"]
