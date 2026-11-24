@@ -23,7 +23,7 @@ class FrameForge:
     def __init__(self, root):
         self.root = root
         self.root.title(f"{APP_NAME} {VERSION}")
-        self.root.geometry("1500x920")
+        self.root.geometry(f"{min(1500,self.root.winfo_screenwidth()-80)}x{min(920,self.root.winfo_screenheight()-100)}")
         self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
         self.root.minsize(900, 600)
         self.root.resizable(True, True)
@@ -137,7 +137,8 @@ class FrameForge:
         menubar.add_cascade(label="Анимация",menu=animation_menu)
         view_menu=tk.Menu(menubar,tearoff=0)
         view_menu.add_command(label="Во весь экран  F11",command=self.toggle_fullscreen)
-        view_menu.add_command(label="Сбросить масштаб",command=lambda:self.zoom_at(self.canvas.winfo_width()//2,self.canvas.winfo_height()//2,1.0/self.zoom))
+        view_menu.add_command(label="Масштаб 100%",command=self.actual_size)
+        view_menu.add_command(label="Вписать холст",command=self.fit_canvas)
         menubar.add_cascade(label="Вид",menu=view_menu)
         self.root.configure(menu=menubar)
 
@@ -194,7 +195,7 @@ class FrameForge:
             for widget in (cell,icon):
                 widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
                 widget.bind("<Enter>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2"))
-                widget.bind("<Leave>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2" if self.tool.get()==value else "#354153"))
+                widget.bind("<Leave>",lambda e,w=cell,v=value:w.configure(highlightbackground="#79b7f2" if self.tool.get()==v else "#354153"))
                 if value in ("rect","ellipse"):
                     widget.bind("<Button-3>",lambda e,v=value:self.shape_options(v))
             self.tool_buttons[value]=cell
@@ -548,17 +549,25 @@ class FrameForge:
         self.pan_y = py + event.y - ay
         self.render()
 
+    def fit_canvas(self):
+        self.zoom=1.0; self.pan_x=self.pan_y=0.0; self.render()
+
+    def actual_size(self):
+        self.zoom=1.0; self.pan_x=self.pan_y=0.0
+        scale,_,_=self.geometry()
+        self.zoom=1.0/scale; self.render()
+
     def zoom_wheel(self, event):
-        self.zoom_at(event.x, event.y, 1.12 if event.delta > 0 else 1 / 1.12)
+        self.zoom_at(event.x, event.y, 1.12 ** (event.delta / 120 if sys.platform == "win32" else max(-4,min(4,event.delta))))
 
     def zoom_at(self, sx, sy, factor):
-        old_scale, old_x, old_y = self.origin
+        old_x, old_y, old_scale = self.origin
         image_x = (sx - old_x) / old_scale
         image_y = (sy - old_y) / old_scale
         self.zoom = max(0.10, min(8.0, self.zoom * factor))
         cw = max(1, self.canvas.winfo_width())
         ch = max(1, self.canvas.winfo_height())
-        fit = min((cw - 30) / self.w, (ch - 30) / self.h)
+        fit = min(max(1,cw - 30) / self.w, max(1,ch - 30) / self.h)
         new_scale = fit * self.zoom
         self.pan_x = sx - image_x * new_scale - (cw - self.w * new_scale) / 2
         self.pan_y = sy - image_y * new_scale - (ch - self.h * new_scale) / 2
@@ -618,7 +627,7 @@ class FrameForge:
 
     def geometry(self):
         cw, ch = max(1,self.canvas.winfo_width()), max(1,self.canvas.winfo_height())
-        scale = min((cw-30)/self.w, (ch-30)/self.h) * self.zoom
+        scale = min(max(1,cw-30)/self.w, max(1,ch-30)/self.h) * self.zoom
         return scale, (cw-self.w*scale)/2 + self.pan_x, (ch-self.h*scale)/2 + self.pan_y
 
     def on_canvas_resize(self, event=None):
@@ -652,6 +661,7 @@ class FrameForge:
         self.canvas.create_image(x,y,image=self.photo,anchor="nw")
         self.canvas.create_rectangle(x,y,x+ww,y+hh,outline="#718096")
         self.origin=(x,y,s)
+        self.canvas_info.config(text=f"{self.w} × {self.h}  •  {s*100:.0f}%")
 
     def coords(self,e):
         x,y,s=self.origin
@@ -729,7 +739,6 @@ class FrameForge:
         if tool=="move" and self.move_anchor is not None:
             self.move_anchor=None;self.move_image=None;self.last=None;self.compose_frame(self.index);self.render();self.status.set("Слой перемещён");return
         if tool in ("pencil","brush","airbrush","eraser"):
-            if e.state & 0x0001 and len(points)>1:points=[points[0],(p[0],points[0][1])]
             color="#171c25" if tool=="eraser" else self.color
             width=max(1,int(self.size.get()*self.origin[2]))
             item=self.canvas.create_line(*a,*b,fill=color,width=width,
@@ -760,6 +769,8 @@ class FrameForge:
         color=(0,0,0,0) if tool=="eraser" else self.rgba()
         d=ImageDraw.Draw(im)
         width=max(1,self.size.get())
+        if tool=="move":
+            self.move_anchor=None; self.move_image=None; self.last=None; self.render(); return
         if tool in ("pencil","brush","eraser","airbrush"):
             # Commit the collected path once, instead of repainting/resampling the canvas on each event.
             if len(points)==1:
@@ -777,12 +788,12 @@ class FrameForge:
                 p=(self.shape_start[0]+(side if dx>=0 else -side),self.shape_start[1]+(side if dy>=0 else -side))
             a=self.shape_start
             if tool=="line":d.line([a,p],fill=color,width=width)
-            elif tool=="rect":d.rectangle([a,p],outline=color,width=width)
+            elif tool=="rect":d.rectangle([min(a[0],p[0]),min(a[1],p[1]),max(a[0],p[0]),max(a[1],p[1])],outline=color,fill=color if self.shape_fill["rect"] else None,width=width)
             elif tool=="triangle":
                 mid=(a[0]+p[0])//2
                 d.line([(mid,a[1]),p,(a[0],p[1]),(mid,a[1])],fill=color,width=width)
             elif tool=="rect":d.rectangle([a,p],outline=color,fill=color if self.shape_fill["rect"] else None,width=width)
-            else:d.ellipse([a,p],outline=color,fill=color if self.shape_fill["ellipse"] else None,width=width)
+            else:d.ellipse([min(a[0],p[0]),min(a[1],p[1]),max(a[0],p[0]),max(a[1],p[1])],outline=color,fill=color if self.shape_fill["ellipse"] else None,width=width)
         for item in self.preview_ids:self.canvas.delete(item)
         self.preview_ids=[]; self.last=None; self.stroke_points=[];self.move_anchor=None;self.move_image=None
         self.compose_frame(self.index)
