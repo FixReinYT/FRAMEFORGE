@@ -859,21 +859,21 @@ class FrameForge:
                                          capstyle=tk.ROUND,joinstyle=tk.ROUND)
             self.preview_ids.append(item)
         elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
-            if tool in ("blur","sharpen"):
-            if points:
-                pad=max(4,width*2);box=(max(0,min(q[0] for q in points)-pad),max(0,min(q[1] for q in points)-pad),min(self.w,max(q[0] for q in points)+pad+1),min(self.h,max(q[1] for q in points)+pad+1))
-                original=im.crop(box)
-                filtered=original.filter(ImageFilter.GaussianBlur(radius=max(1,width/5))) if tool=="blur" else original.filter(ImageFilter.UnsharpMask(radius=max(1,width/8),percent=180,threshold=2))
-                mask=Image.new("L",original.size,0);md=ImageDraw.Draw(mask);local=[(x-box[0],y-box[1]) for x,y in points]
-                md.line(local,fill=255,width=max(3,width*2),joint="curve")
-                im.paste(filtered,box,mask)
-        elif tool=="lasso" and len(points)>=3:
+            if tool in ("blur","sharpen") and points:
+            pad=max(4,width*2)
+            box=(max(0,min(q[0] for q in points)-pad),max(0,min(q[1] for q in points)-pad),min(self.w,max(q[0] for q in points)+pad+1),min(self.h,max(q[1] for q in points)+pad+1))
+            original=im.crop(box)
+            filtered=original.filter(ImageFilter.GaussianBlur(radius=max(1,width/5))) if tool=="blur" else original.filter(ImageFilter.UnsharpMask(radius=max(1,width/8),percent=180,threshold=2))
+            mask=Image.new("L",original.size,0);md=ImageDraw.Draw(mask);local=[(x-box[0],y-box[1]) for x,y in points]
+            md.line(local,fill=255,width=max(3,width*2),joint="curve");im.paste(filtered,box,mask)
+        if tool=="lasso" and len(points)>=3:
             mask=Image.new("L",(self.w,self.h),0);ImageDraw.Draw(mask).polygon(points,fill=255)
             self.selection_mask=mask;self.selection_box=mask.getbbox();self.status.set("Свободное выделение создано")
-        elif tool=="stamp" and self.stamp_source is not None:
-            sx,sy=self.stamp_source;r=max(4,width);source=im.crop((max(0,sx-r),max(0,sy-r),min(self.w,sx+r+1),min(self.h,sy+r+1)))
-            for x,y in points: im.paste(source,(max(0,min(self.w-source.width,x-r)),max(0,min(self.h-source.height,y-r))),source)
-        elif tool=="gradient":
+        if tool=="stamp" and self.stamp_source is not None:
+            sx,sy=self.stamp_source;r=max(4,width)
+            source=im.crop((max(0,sx-r),max(0,sy-r),min(self.w,sx+r+1),min(self.h,sy+r+1)))
+            for x,y in points:im.paste(source,(max(0,min(self.w-source.width,x-r)),max(0,min(self.h-source.height,y-r))),source)
+        if tool=="gradient":
             x0,y0=self.shape_start;x1,y1=p;left,top=max(0,min(x0,x1)),max(0,min(y0,y1));right,bottom=min(self.w,max(x0,x1)),min(self.h,max(y0,y1))
             if right>left and bottom>top:
                 patch=Image.new("RGBA",(right-left,bottom-top));pix=patch.load();vx=x1-x0;vy=y1-y0;den=max(1,vx*vx+vy*vy);base=self.rgba()
@@ -881,17 +881,17 @@ class FrameForge:
                     for xx in range(patch.width):
                         t=max(0,min(1,((left+xx-x0)*vx+(top+yy-y0)*vy)/den));pix[xx,yy]=(base[0],base[1],base[2],int(base[3]*(1-t)))
                 im.alpha_composite(patch,(left,top))
-        elif tool=="polygon":
+        if tool=="polygon":
             import math
             x0,y0=self.shape_start;cx=(x0+p[0])//2;cy=(y0+p[1])//2;rx=max(1,abs(p[0]-x0)//2);ry=max(1,abs(p[1]-y0)//2)
             pts=[(cx+rx*math.cos(i*math.pi/3-math.pi/2),cy+ry*math.sin(i*math.pi/3-math.pi/2)) for i in range(6)];d.polygon(pts,outline=color)
-        elif tool=="bezier":
+        if tool=="bezier":
             x0,y0=self.shape_start;pts=[]
             for i in range(101):
                 t=i/100;u=1-t;cx=(x0+p[0])//2;cy=min(y0,p[1])-abs(p[1]-y0)//2
                 pts.append((int(u*u*x0+2*u*t*cx+t*t*p[0]),int(u*u*y0+2*u*t*cy+t*t*p[1])))
             d.line(pts,fill=color,width=width)
-        elif tool in ("pencil","brush","airbrush") and self.symmetry_enabled:
+        if tool in ("pencil","brush","airbrush") and self.symmetry_enabled:
             mirrored=[(self.w-1-x,y) for x,y in points]
             if len(mirrored)>1:d.line(mirrored,fill=color,width=width,joint="curve")
         for item in self.preview_ids:self.canvas.delete(item)
