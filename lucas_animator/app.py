@@ -209,8 +209,9 @@ class FrameForge:
             icon=tk.Canvas(cell,width=38,height=32,bg="#252d39",highlightthickness=0)
             icon.pack(side="left",padx=(7,8),pady=4)
             self.draw_tool_icon(icon,value)
-            tk.Label(cell,text=label,anchor="w",bg="#252d39",fg="#e8edf5",font=("Segoe UI",9)).pack(side="left",fill="x",expand=True)
-            for widget in (cell,icon):
+            label_widget=tk.Label(cell,text=label,anchor="w",bg="#252d39",fg="#e8edf5",font=("Segoe UI",9))
+            label_widget.pack(side="left",fill="x",expand=True)
+            for widget in (cell,icon,label_widget):
                 widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
                 widget.bind("<Enter>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2"))
                 widget.bind("<Leave>",lambda e,w=cell,v=value:w.configure(highlightbackground="#79b7f2" if self.tool.get()==v else "#354153"))
