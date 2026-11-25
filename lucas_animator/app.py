@@ -727,8 +727,16 @@ class FrameForge:
         if tool=="move":
             self.snapshot();self.move_anchor=p;self.move_image=self.active_image().copy();self.last=p;return
         if tool=="eyedropper":
-            col=self.active_image().getpixel(p)
-            if col[3]: self.color="#%02x%02x%02x"%col[:3]; self.swatch.config(bg=self.color)
+            # Sample the visible composite so colors on other layers can be picked.
+            try:
+                col=self.compose_frame(self.index).convert("RGBA").getpixel(p)
+                if col[3]:
+                    self.set_color("#%02x%02x%02x"%col[:3])
+                    self.status.set("Цвет выбран: "+self.color.upper())
+                else:
+                    self.status.set("В этой точке нет видимого цвета")
+            except Exception as exc:
+                messagebox.showerror(APP_NAME,"Не удалось взять цвет: "+str(exc),parent=self.root)
             return
         if tool=="fill":
             layers=self.layer_frames[self.index]
