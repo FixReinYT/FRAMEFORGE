@@ -849,9 +849,10 @@ class FrameForge:
         self.last=p; self.shape_start=p; self.stroke_points=[p]
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
         cx,cy=self.to_canvas(p)
-        self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
         if tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse","bezier"):
             self.preview_ids=[]
+        else:
+            self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
         self.status.set("Рисование...")
 
     def to_canvas(self,p):
