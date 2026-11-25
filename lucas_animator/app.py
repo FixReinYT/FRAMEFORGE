@@ -1,6 +1,6 @@
 import json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
-from PIL import Image, ImageDraw, ImageTk, ImageSequence, ImageFilter
+from PIL import Image, ImageDraw, ImageTk, ImageSequence, ImageFilter, ImageFont
 from contour_fill import apply_fill
 from project_io import read_project, write_project
 
@@ -740,6 +740,21 @@ class FrameForge:
         if tool=="select":
             self.selection_box=self.active_image().getbbox();self.render()
             self.status.set("Выделено содержимое активного слоя" if self.selection_box else "На слое нет рисунка")
+            return
+        if tool=="magic_wand":
+            from collections import deque
+            src=self.active_image().convert("RGB");target=src.getpixel(p);pixels=src.load()
+            mask=Image.new("L",(self.w,self.h),0);mp=mask.load();queue=deque([p]);mp[p[0],p[1]]=255
+            tolerance=32
+            while queue and len(queue)<self.w*self.h:
+                x,y=queue.popleft()
+                for nx,ny in ((x+1,y),(x-1,y),(x,y+1),(x,y-1)):
+                    if 0<=nx<self.w and 0<=ny<self.h and mp[nx,ny]==0:
+                        px=pixels[nx,ny]
+                        if sum((px[k]-target[k])**2 for k in range(3))<=tolerance*tolerance*3:
+                            mp[nx,ny]=255;queue.append((nx,ny))
+            self.selection_mask=mask;self.selection_box=mask.getbbox()
+            self.status.set("Область по цвету выделена" if self.selection_box else "Область не найдена")
             return
         if tool=="text":
             value=simpledialog.askstring(APP_NAME,"Введите текст:",parent=self.root)
