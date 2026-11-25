@@ -20,8 +20,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
-      - name: Run contour fill tests
-        run: python -m unittest discover -s tests -v
+      - name: Run regression tests
+        run: |
+          python -m compileall -q lucas_animator tests
+          python -m unittest discover -s tests -v
       - name: Generate application icon
         run: python tools/create_icon.py
       - name: Create Windows version metadata
@@ -30,8 +32,8 @@ jobs:
           @'
           VSVersionInfo(
             ffi=FixedFileInfo(
-              filevers=(0, 10, 0, 0),
-              prodvers=(0, 10, 0, 0),
+              filevers=(0, 10, 1, 0),
+              prodvers=(0, 10, 1, 0),
               mask=0x3f,
               flags=0x0,
               OS=0x4,
@@ -44,12 +46,12 @@ jobs:
                 StringTable('040904B0', [
                   StringStruct('CompanyName', 'TheLucassDen'),
                   StringStruct('FileDescription', 'FRAMEFORGE - 2D Drawing and Animation Editor'),
-                  StringStruct('FileVersion', '0.10.0.0'),
+                  StringStruct('FileVersion', '0.10.1.0'),
                   StringStruct('InternalName', 'FRAMEFORGE'),
                   StringStruct('LegalCopyright', 'Copyright (C) 2026 TheLucassDen. All rights reserved.'),
                   StringStruct('OriginalFilename', 'FRAMEFORGE.exe'),
                   StringStruct('ProductName', 'FRAMEFORGE'),
-                  StringStruct('ProductVersion', '0.10.0')
+                  StringStruct('ProductVersion', '0.10.1')
                 ])
               ]),
               VarFileInfo([VarStruct('Translation', [1033, 1200])])
