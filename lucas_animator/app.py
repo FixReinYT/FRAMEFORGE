@@ -479,7 +479,13 @@ class FrameForge:
     def active_image(self):
         return self.layer_frames[self.index][self.active_layer]["image"]
 
+    def sync_frame_cache(self):
+        count=len(self.layer_frames)
+        if len(self.frames)!=count:
+            self.frames=[None]*count
+
     def compose_frame(self, index):
+        self.sync_frame_cache()
         result=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
         for layer in self.layer_frames[index]:
             if layer["visible"]:
@@ -690,7 +696,7 @@ class FrameForge:
         base=self.checker_cache.convert("RGBA")
         im=self.compose_frame(self.index).copy()
         if self.onion.get() and self.index>0:
-            prev=self.frames[self.index-1]
+            prev=self.compose_frame(self.index-1)
             tint=Image.new("RGBA",prev.size,(255,75,95,0))
             tint.putalpha(prev.getchannel("A").point(lambda a:int(a*.22)))
             tint.alpha_composite(im); im=tint
@@ -994,8 +1000,9 @@ class FrameForge:
         try:
             import imageio_ffmpeg
             ffmpeg=imageio_ffmpeg.get_ffmpeg_exe()
-            frames=[self.compose_frame(i).copy() for i in range(len(self.layer_frames))]
-            if not frames:raise RuntimeError("В проекте нет кадров для экспорта.")
+            frame_count=len(self.layer_frames)
+            self.sync_frame_cache()
+            if not frame_count:raise RuntimeError("В проекте нет кадров для экспорта.")
             fps=max(1,min(60,int(self.fps.get())))
             width=self.w+(self.w%2); height=self.h+(self.h%2)
             cmd=[ffmpeg,"-hide_banner","-loglevel","error","-y",
@@ -1004,11 +1011,11 @@ class FrameForge:
                  "-i","pipe:0","-an","-c:v",codec]
             cmd.extend(extra_args)
             cmd.extend(["-pix_fmt","yuv420p","-r",str(fps),
-                        "-frames:v",str(len(frames)),"-movflags","+faststart",path])
+                        "-frames:v",str(frame_count),"-movflags","+faststart",path])
             proc=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
-            for frame in frames:
-                rgba=frame.convert("RGBA")
+            for i in range(frame_count):
+                rgba=self.compose_frame(i)
                 if rgba.size!=(self.w,self.h):
                     rgba=rgba.resize((self.w,self.h),Image.Resampling.LANCZOS)
                 rgb=Image.new("RGBA",(self.w,self.h),(255,255,255,255))
@@ -1024,7 +1031,7 @@ class FrameForge:
             if not os.path.isfile(path) or os.path.getsize(path)==0:
                 raise RuntimeError("Видео не было создано: выходной файл пуст.")
             self.status.set("Видео экспортировано: "+os.path.basename(path))
-            messagebox.showinfo(APP_NAME,f"Анимация экспортирована в {extension.upper()}.\\nКадров: {len(frames)} · FPS: {fps}",parent=self.root)
+            messagebox.showinfo(APP_NAME,f"Анимация экспортирована в {extension.upper()}.\\nКадров: {frame_count} · FPS: {fps}",parent=self.root)
         except Exception as exc:
             if proc is not None and proc.poll() is None:
                 try:
@@ -1047,17 +1054,18 @@ class FrameForge:
 
     def png(self):
         p=filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG","*.png")])
-        if p:self.frames[self.index].save(p)
+        if p:self.compose_frame(self.index).save(p)
     def gif(self):
         p=filedialog.asksaveasfilename(defaultextension=".gif",filetypes=[("GIF","*.gif")])
         if p:
-            ims=[im.convert("RGBA") for im in self.frames]
+            ims=[self.compose_frame(i) for i in range(len(self.layer_frames))]
             ims[0].save(p,save_all=True,append_images=ims[1:],duration=max(1,int(1000/max(1,self.fps.get()))),loop=0,disposal=2)
     def png_sequence(self):
         p=filedialog.asksaveasfilename(defaultextension=".zip",filetypes=[("ZIP archive","*.zip")])
         if p:
             with zipfile.ZipFile(p,"w",zipfile.ZIP_DEFLATED) as z:
-                for i,im in enumerate(self.frames):
+                for i in range(len(self.layer_frames)):
+                    im=self.compose_frame(i)
                     import io
                     b=io.BytesIO(); im.save(b,format="PNG"); z.writestr(f"frame_{i+1:05d}.png",b.getvalue())
     def sprite_sheet(self):
@@ -1066,7 +1074,8 @@ class FrameForge:
         if self.w*cols>16000 or self.h*rows>16000:
             messagebox.showerror(APP_NAME,"Sprite Sheet слишком большой. Уменьшите число колонок."); return
         sheet=Image.new("RGBA",(self.w*cols,self.h*rows),(0,0,0,0))
-        for i,im in enumerate(self.frames): sheet.alpha_composite(im,((i%cols)*self.w,(i//cols)*self.h))
+        for i in range(len(self.layer_frames)):
+            im=self.compose_frame(i); sheet.alpha_composite(im,((i%cols)*self.w,(i//cols)*self.h))
         p=filedialog.asksaveasfilename(defaultextension=".png",filetypes=[("PNG","*.png")])
         if p:sheet.save(p)
 
