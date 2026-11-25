@@ -195,6 +195,24 @@ class FrameForge:
         tool_inner=tk.Frame(toolbox,bg="#252d39");tool_window=toolbox.create_window((0,0),window=tool_inner,anchor="nw")
         toolbox.bind("<Configure>",lambda e:toolbox.itemconfigure(tool_window,width=e.width))
         tool_inner.bind("<Configure>",lambda e:toolbox.configure(scrollregion=toolbox.bbox("all")))
+        def scroll_tools(event):
+            widget=self.root.winfo_containing(event.x_root,event.y_root)
+            node=widget
+            inside=False
+            while node is not None:
+                if node is left:
+                    inside=True;break
+                node=getattr(node,"master",None)
+            if not inside:return
+            delta=getattr(event,"delta",0)
+            if delta:
+                toolbox.yview_scroll(-1 if delta>0 else 1,"units")
+            elif getattr(event,"num",None)==4:toolbox.yview_scroll(-1,"units")
+            elif getattr(event,"num",None)==5:toolbox.yview_scroll(1,"units")
+            return "break"
+        self.root.bind_all("<MouseWheel>",scroll_tools,add="+")
+        self.root.bind_all("<Button-4>",scroll_tools,add="+")
+        self.root.bind_all("<Button-5>",scroll_tools,add="+")
         tools=[("pencil","Карандаш"),("brush","Кисть"),("airbrush","Аэрограф"),("eraser","Ластик"),
                ("line","Линия"),("rect","Прямоугольник"),("ellipse","Эллипс"),("triangle","Треугольник"),
                ("polygon","Многоугольник"),("bezier","Кривая Безье"),("text","Текст"),("lasso","Лассо"),
@@ -403,17 +421,19 @@ class FrameForge:
             canvas.create_text(19,17,text=glyph,fill=accent,font=("Segoe UI",18,"bold"))
 
     def bind_shortcuts(self):
-        self.root.bind("<Control-z>", lambda e: (self.undo(),"break")[1])
-        self.root.bind("<Control-u>", lambda e: self.redo())
-        self.root.bind("<Control-y>", lambda e: (self.redo(),"break")[1])
-        self.root.bind("<Control-Shift-Z>", lambda e: (self.redo(),"break")[1])
-        self.root.bind("<Control-Shift-S>", lambda e: (self.save_as(),"break")[1])
-        self.root.bind("<Control-s>", lambda e: self.save())
-        self.root.bind("<Control-o>", lambda e: self.open())
-        self.root.bind("<Control-n>", lambda e: self.new())
-        self.root.bind("<space>", lambda e: self.play())
-        self.root.bind("<F11>", lambda e: self.toggle_fullscreen())
-        self.root.bind("<Escape>", lambda e: self.exit_fullscreen())
+        # bind_all receives shortcuts from the canvas, tool buttons and dockers.
+        # Returning "break" prevents duplicate class-level handling.
+        self.root.bind_all("<Control-z>", lambda e: (self.undo(), "break")[1])
+        self.root.bind_all("<Control-y>", lambda e: (self.redo(), "break")[1])
+        self.root.bind_all("<Control-Shift-Z>", lambda e: (self.redo(), "break")[1])
+        self.root.bind_all("<Control-Shift-S>", lambda e: (self.save_as(), "break")[1])
+        self.root.bind_all("<Control-s>", lambda e: (self.save(), "break")[1])
+        self.root.bind_all("<Control-o>", lambda e: (self.open(), "break")[1])
+        self.root.bind_all("<Control-n>", lambda e: (self.new(), "break")[1])
+        self.root.bind_all("<Control-q>", lambda e: (self.close_project(), "break")[1])
+        self.root.bind_all("<space>", lambda e: (self.play(), "break")[1])
+        self.root.bind_all("<F11>", lambda e: (self.toggle_fullscreen(), "break")[1])
+        self.root.bind_all("<Escape>", lambda e: (self.exit_fullscreen(), "break")[1])
 
     def size_changed(self, v): self.size_label.config(text=f"{int(float(v))} px")
     def opacity_changed(self, v): self.opacity_label.config(text=f"{int(float(v))}%")
@@ -830,7 +850,7 @@ class FrameForge:
         # Draw live preview with Tk primitives. The full bitmap is not rescaled on every mouse event.
         cx,cy=self.to_canvas(p)
         self.preview_ids=[self.canvas.create_oval(cx-1,cy-1,cx+1,cy+1,fill=self.color,outline=self.color)]
-        if tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
+        if tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse","bezier"):
             self.preview_ids=[]
         self.status.set("Рисование...")
 
@@ -861,11 +881,24 @@ class FrameForge:
             item=self.canvas.create_line(*a,*b,fill=color,width=width,
                                          capstyle=tk.ROUND,joinstyle=tk.ROUND)
             self.preview_ids.append(item)
-        elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
+        elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse","bezier"):
             for item in self.preview_ids:self.canvas.delete(item)
             self.preview_ids=[]
             a=self.to_canvas(self.shape_start)
-            if tool=="line":
+            if tool=="bezier":
+                # Live cubic-curve preview: endpoint follows the pointer and
+                # control handles create a smooth arch while the mouse is held.
+                dx=b[0]-a[0];dy=b[1]-a[1]
+                c1=(a[0]+dx*0.25,a[1]-dy*0.25)
+                c2=(a[0]+dx*0.75,a[1]+dy*0.25)
+                curve=[]
+                for step in range(33):
+                    t=step/32;u=1-t
+                    curve.append((u**3*a[0]+3*u*u*t*c1[0]+3*u*t*t*c2[0]+t**3*b[0],
+                                  u**3*a[1]+3*u*u*t*c1[1]+3*u*t*t*c2[1]+t**3*b[1]))
+                flat=[v for point in curve for v in point]
+                item=self.canvas.create_line(*flat,fill=self.color,width=max(1,int(self.size.get()*self.origin[2])),smooth=True)
+            elif tool=="line":
                 item=self.canvas.create_line(*a,*b,fill=self.color,width=max(1,int(self.size.get()*self.origin[2])))
             elif tool=="rect":
                 item=self.canvas.create_rectangle(*a,*b,outline=self.color,width=max(1,int(self.size.get()*self.origin[2])))
@@ -899,12 +932,23 @@ class FrameForge:
                     r=width/2
                     for q in (points[0],points[-1]):
                         d.ellipse((q[0]-r,q[1]-r,q[0]+r,q[1]+r),fill=color)
-        elif tool in ("line","rect","ellipse","triangle"):
+        elif tool in ("line","rect","ellipse","triangle","bezier"):
             if e.state & 0x0001 and tool in ("rect","ellipse","triangle"):
                 dx=p[0]-self.shape_start[0];dy=p[1]-self.shape_start[1];side=max(abs(dx),abs(dy))
                 p=(self.shape_start[0]+(side if dx>=0 else -side),self.shape_start[1]+(side if dy>=0 else -side))
             a=self.shape_start
             if tool=="line":d.line([a,p],fill=color,width=width)
+            elif tool=="bezier":
+                import math
+                dx=p[0]-a[0];dy=p[1]-a[1]
+                c1=(a[0]+dx*0.25,a[1]-dy*0.25)
+                c2=(a[0]+dx*0.75,a[1]+dy*0.25)
+                curve=[]
+                for step in range(65):
+                    t=step/64;u=1-t
+                    curve.append((round(u**3*a[0]+3*u*u*t*c1[0]+3*u*t*t*c2[0]+t**3*p[0]),
+                                  round(u**3*a[1]+3*u*u*t*c1[1]+3*u*t*t*c2[1]+t**3*p[1])))
+                d.line(curve,fill=color,width=width,joint="curve")
             elif tool=="rect":d.rectangle([min(a[0],p[0]),min(a[1],p[1]),max(a[0],p[0]),max(a[1],p[1])],outline=color,fill=color if self.shape_fill["rect"] else None,width=width)
             elif tool=="triangle":
                 mid=(a[0]+p[0])//2
