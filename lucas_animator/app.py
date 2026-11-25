@@ -5,7 +5,7 @@ from contour_fill import apply_fill
 from project_io import read_project, write_project
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.10.1"
+VERSION = "0.10.2"
 BG, PANEL, ALT, BORDER = "#202630", "#293342", "#303b4b", "#3b485b"
 TEXT, MUTED, ACCENT = "#e8edf5", "#a5b2c5", "#68a9e8"
 
@@ -186,13 +186,14 @@ class FrameForge:
 
         work=tk.Frame(self.root,bg="#202630");work.pack(fill="both",expand=True,padx=7,pady=7)
         # Narrow icon-only toolbox on the left.
-        left=tk.Frame(work,bg="#252d39",width=58,highlightthickness=1,highlightbackground="#354153")
+        left=tk.Frame(work,bg="#252d39",width=190,highlightthickness=1,highlightbackground="#354153")
         left.pack(side="left",fill="y");left.pack_propagate(False)
         toolbox=tk.Canvas(left,bg="#252d39",highlightthickness=0)
         tool_scroll=ttk.Scrollbar(left,orient="vertical",command=toolbox.yview)
         toolbox.configure(yscrollcommand=tool_scroll.set)
         toolbox.pack(side="left",fill="both",expand=True);tool_scroll.pack(side="right",fill="y")
-        tool_inner=tk.Frame(toolbox,bg="#252d39");toolbox.create_window((0,0),window=tool_inner,anchor="nw")
+        tool_inner=tk.Frame(toolbox,bg="#252d39");tool_window=toolbox.create_window((0,0),window=tool_inner,anchor="nw")
+        toolbox.bind("<Configure>",lambda e:toolbox.itemconfigure(tool_window,width=e.width))
         tool_inner.bind("<Configure>",lambda e:toolbox.configure(scrollregion=toolbox.bbox("all")))
         tools=[("pencil","Карандаш"),("brush","Кисть"),("airbrush","Аэрограф"),("eraser","Ластик"),
                ("line","Линия"),("rect","Прямоугольник"),("ellipse","Эллипс"),("triangle","Треугольник"),
@@ -206,8 +207,9 @@ class FrameForge:
             cell=tk.Frame(tool_inner,bg="#252d39",highlightthickness=1,highlightbackground="#354153",height=43)
             cell.pack(fill="x",padx=4,pady=2);cell.pack_propagate(False)
             icon=tk.Canvas(cell,width=38,height=32,bg="#252d39",highlightthickness=0)
-            icon.place(relx=.5,rely=.5,anchor="center")
+            icon.pack(side="left",padx=(7,8),pady=4)
             self.draw_tool_icon(icon,value)
+            tk.Label(cell,text=label,anchor="w",bg="#252d39",fg="#e8edf5",font=("Segoe UI",9)).pack(side="left",fill="x",expand=True)
             for widget in (cell,icon):
                 widget.bind("<Button-1>",lambda e,v=value:self.choose_tool(v))
                 widget.bind("<Enter>",lambda e,w=cell:w.configure(highlightbackground="#79b7f2"))
