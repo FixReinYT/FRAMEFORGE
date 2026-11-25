@@ -1,6 +1,6 @@
 import json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
-from PIL import Image, ImageDraw, ImageTk, ImageSequence
+from PIL import Image, ImageDraw, ImageTk, ImageSequence, ImageFilter
 from contour_fill import apply_fill
 from project_io import read_project, write_project
 
@@ -61,6 +61,9 @@ class FrameForge:
         self.fill_gap = tk.IntVar(value=int(self.user_settings.get("fill_gap",0)))
         self.fill_line_layer = tk.StringVar(value="")
         self.selection_box = None
+        self.selection_mask = None
+        self.stamp_source = None
+        self.symmetry_enabled = False
         self.move_anchor = None
         self.move_image = None
         self.checker_cache = None
@@ -185,13 +188,22 @@ class FrameForge:
         # Narrow icon-only toolbox on the left.
         left=tk.Frame(work,bg="#252d39",width=58,highlightthickness=1,highlightbackground="#354153")
         left.pack(side="left",fill="y");left.pack_propagate(False)
-        tools=[("pencil","Карандаш"),("brush","Кисть"),("airbrush","Аэрограф"),
-               ("eraser","Ластик"),("line","Линия"),("rect","Прямоугольник"),
-               ("ellipse","Эллипс"),("triangle","Треугольник"),("select","Выделение"),
-               ("move","Перемещение"),("fill","Заливка"),("eyedropper","Пипетка")]
+        toolbox=tk.Canvas(left,bg="#252d39",highlightthickness=0)
+        tool_scroll=ttk.Scrollbar(left,orient="vertical",command=toolbox.yview)
+        toolbox.configure(yscrollcommand=tool_scroll.set)
+        toolbox.pack(side="left",fill="both",expand=True);tool_scroll.pack(side="right",fill="y")
+        tool_inner=tk.Frame(toolbox,bg="#252d39");toolbox.create_window((0,0),window=tool_inner,anchor="nw")
+        tool_inner.bind("<Configure>",lambda e:toolbox.configure(scrollregion=toolbox.bbox("all")))
+        tools=[("pencil","Карандаш"),("brush","Кисть"),("airbrush","Аэрограф"),("eraser","Ластик"),
+               ("line","Линия"),("rect","Прямоугольник"),("ellipse","Эллипс"),("triangle","Треугольник"),
+               ("polygon","Многоугольник"),("bezier","Кривая Безье"),("text","Текст"),("lasso","Лассо"),
+               ("magic_wand","Волшебная палочка"),("select","Выделение"),("move","Перемещение"),
+               ("transform","Трансформация"),("fill","Заливка"),("gradient","Градиент"),
+               ("blur","Размытие"),("sharpen","Резкость"),("stamp","Штамп"),("symmetry","Симметрия"),
+               ("eyedropper","Пипетка")]
         self.tool_buttons={}
         for value,label in tools:
-            cell=tk.Frame(left,bg="#252d39",highlightthickness=1,highlightbackground="#354153",height=43)
+            cell=tk.Frame(tool_inner,bg="#252d39",highlightthickness=1,highlightbackground="#354153",height=43)
             cell.pack(fill="x",padx=4,pady=2);cell.pack_propagate(False)
             icon=tk.Canvas(cell,width=38,height=32,bg="#252d39",highlightthickness=0)
             icon.place(relx=.5,rely=.5,anchor="center")
@@ -380,6 +392,12 @@ class FrameForge:
         elif name=="eyedropper":
             line([(9,25),(25,9),(29,13),(13,29),(9,25)],3)
             canvas.create_line(20,8,26,14,fill=accent,width=3)
+        elif name in ("polygon","bezier"):
+            if name=="polygon":canvas.create_polygon(19,4,31,13,26,28,9,28,5,13,outline=accent,fill="",width=2)
+            else:canvas.create_line(5,25,12,5,26,27,32,7,smooth=True,fill=accent,width=3)
+        elif name in ("text","lasso","magic_wand","transform","gradient","blur","sharpen","stamp","symmetry"):
+            glyph={"text":"T","lasso":"⌁","magic_wand":"✦","transform":"↗","gradient":"◩","blur":"◌","sharpen":"✣","stamp":"▣","symmetry":"⇄"}[name]
+            canvas.create_text(19,17,text=glyph,fill=accent,font=("Segoe UI",18,"bold"))
 
     def bind_shortcuts(self):
         self.root.bind("<Control-z>", lambda e: (self.undo(),"break")[1])
@@ -720,10 +738,37 @@ class FrameForge:
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
         if tool=="select":
-            self.snapshot()
             self.selection_box=self.active_image().getbbox();self.render()
             self.status.set("Выделено содержимое активного слоя" if self.selection_box else "На слое нет рисунка")
             return
+        if tool=="text":
+            value=simpledialog.askstring(APP_NAME,"Введите текст:",parent=self.root)
+            if value:
+                self.snapshot()
+                try: font=ImageFont.truetype("arial.ttf",max(12,self.size.get()*3))
+                except Exception: font=ImageFont.load_default()
+                ImageDraw.Draw(self.active_image()).text(p,value,fill=self.rgba(),font=font)
+                self.compose_frame(self.index);self.render();self.status.set("Текст добавлен")
+            return
+        if tool=="symmetry":
+            self.symmetry_enabled=not self.symmetry_enabled
+            self.status.set("Зеркальное рисование: "+("ВКЛ" if self.symmetry_enabled else "ВЫКЛ"))
+            self.choose_tool("brush");return
+        if tool=="transform":
+            box=self.active_image().getbbox()
+            if not box:self.status.set("На слое нет содержимого");return
+            scale=simpledialog.askfloat(APP_NAME,"Масштаб (%)",initialvalue=100,minvalue=1,maxvalue=1000,parent=self.root)
+            if scale is None:return
+            angle=simpledialog.askfloat(APP_NAME,"Поворот (градусы)",initialvalue=0,parent=self.root)
+            if angle is None:return
+            self.snapshot();src=self.active_image();crop=src.crop(box)
+            crop=crop.resize((max(1,int(crop.width*scale/100)),max(1,int(crop.height*scale/100))),Image.Resampling.LANCZOS).rotate(angle,expand=True,resample=Image.Resampling.BICUBIC)
+            out=Image.new("RGBA",(self.w,self.h),(0,0,0,0));out.alpha_composite(crop,(max(0,(self.w-crop.width)//2),max(0,(self.h-crop.height)//2)))
+            self.layer_frames[self.index][self.active_layer]["image"]=out;self.compose_frame(self.index);self.render();self.status.set("Трансформация применена");return
+        if tool=="stamp":
+            if e.state & 0x0008 or e.state & 0x0004:
+                self.stamp_source=p;self.status.set("Источник штампа выбран");return
+            if self.stamp_source is None:self.status.set("Удерживай Alt и щёлкни по источнику");return
         if tool=="move":
             self.snapshot();self.move_anchor=p;self.move_image=self.active_image().copy();self.last=p;return
         if tool=="eyedropper":
@@ -783,7 +828,7 @@ class FrameForge:
             moved=Image.new("RGBA",(self.w,self.h),(0,0,0,0));moved.alpha_composite(self.move_image,(dx,dy))
             self.layer_frames[self.index][self.active_layer]["image"]=moved
             self.compose_frame(self.index);self.render();return
-        if tool in ("select","eyedropper","fill"):return
+        if tool in ("select","eyedropper","fill","text","transform","symmetry","magic_wand"):return
         if e.state & 0x0001 and tool in ("brush","pencil","airbrush","eraser","line","rect","ellipse","triangle"):
             dx=p[0]-self.shape_start[0];dy=p[1]-self.shape_start[1]
             if tool in ("rect","ellipse","triangle"):
@@ -799,7 +844,42 @@ class FrameForge:
                                          capstyle=tk.ROUND,joinstyle=tk.ROUND)
             self.preview_ids.append(item)
         elif tool in ("line","rect","ellipse","triangle","filled_rect","filled_ellipse"):
-            for item in self.preview_ids:self.canvas.delete(item)
+            if tool in ("blur","sharpen"):
+            if points:
+                pad=max(4,width*2);box=(max(0,min(q[0] for q in points)-pad),max(0,min(q[1] for q in points)-pad),min(self.w,max(q[0] for q in points)+pad+1),min(self.h,max(q[1] for q in points)+pad+1))
+                original=im.crop(box)
+                filtered=original.filter(ImageFilter.GaussianBlur(radius=max(1,width/5))) if tool=="blur" else original.filter(ImageFilter.UnsharpMask(radius=max(1,width/8),percent=180,threshold=2))
+                mask=Image.new("L",original.size,0);md=ImageDraw.Draw(mask);local=[(x-box[0],y-box[1]) for x,y in points]
+                md.line(local,fill=255,width=max(3,width*2),joint="curve")
+                im.paste(filtered,box,mask)
+        elif tool=="lasso" and len(points)>=3:
+            mask=Image.new("L",(self.w,self.h),0);ImageDraw.Draw(mask).polygon(points,fill=255)
+            self.selection_mask=mask;self.selection_box=mask.getbbox();self.status.set("Свободное выделение создано")
+        elif tool=="stamp" and self.stamp_source is not None:
+            sx,sy=self.stamp_source;r=max(4,width);source=im.crop((max(0,sx-r),max(0,sy-r),min(self.w,sx+r+1),min(self.h,sy+r+1)))
+            for x,y in points: im.paste(source,(max(0,min(self.w-source.width,x-r)),max(0,min(self.h-source.height,y-r))),source)
+        elif tool=="gradient":
+            x0,y0=self.shape_start;x1,y1=p;left,top=max(0,min(x0,x1)),max(0,min(y0,y1));right,bottom=min(self.w,max(x0,x1)),min(self.h,max(y0,y1))
+            if right>left and bottom>top:
+                patch=Image.new("RGBA",(right-left,bottom-top));pix=patch.load();vx=x1-x0;vy=y1-y0;den=max(1,vx*vx+vy*vy);base=self.rgba()
+                for yy in range(patch.height):
+                    for xx in range(patch.width):
+                        t=max(0,min(1,((left+xx-x0)*vx+(top+yy-y0)*vy)/den));pix[xx,yy]=(base[0],base[1],base[2],int(base[3]*(1-t)))
+                im.alpha_composite(patch,(left,top))
+        elif tool=="polygon":
+            import math
+            x0,y0=self.shape_start;cx=(x0+p[0])//2;cy=(y0+p[1])//2;rx=max(1,abs(p[0]-x0)//2);ry=max(1,abs(p[1]-y0)//2)
+            pts=[(cx+rx*math.cos(i*math.pi/3-math.pi/2),cy+ry*math.sin(i*math.pi/3-math.pi/2)) for i in range(6)];d.polygon(pts,outline=color)
+        elif tool=="bezier":
+            x0,y0=self.shape_start;pts=[]
+            for i in range(101):
+                t=i/100;u=1-t;cx=(x0+p[0])//2;cy=min(y0,p[1])-abs(p[1]-y0)//2
+                pts.append((int(u*u*x0+2*u*t*cx+t*t*p[0]),int(u*u*y0+2*u*t*cy+t*t*p[1])))
+            d.line(pts,fill=color,width=width)
+        elif tool in ("pencil","brush","airbrush") and self.symmetry_enabled:
+            mirrored=[(self.w-1-x,y) for x,y in points]
+            if len(mirrored)>1:d.line(mirrored,fill=color,width=width,joint="curve")
+        for item in self.preview_ids:self.canvas.delete(item)
             self.preview_ids=[]
             a=self.to_canvas(self.shape_start)
             if tool=="line":
