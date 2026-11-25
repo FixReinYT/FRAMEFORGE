@@ -40,7 +40,7 @@ class FrameForge:
             with open(user_cfg,encoding="utf-8") as cfg_file: self.user_settings=json.load(cfg_file)
         except Exception: self.user_settings={}
         self.index, self.fps = 0, tk.IntVar(value=max(1,min(60,int(self.user_settings.get("default_fps",12)))))
-        self.size, self.opacity = tk.IntVar(value=8), tk.IntVar(value=100)
+        self.size, self.opacity = tk.IntVar(value=int(self.user_settings.get("brush_size",8))), tk.IntVar(value=int(self.user_settings.get("brush_opacity",100)))
         self.color, self.tool = "#202633", tk.StringVar(value="brush")
         self.onion, self.playing = tk.BooleanVar(value=bool(self.user_settings.get("onion_skin",True))), False
         self.project, self.last, self.photo = None, None, None
@@ -58,7 +58,7 @@ class FrameForge:
         self.stroke_points = []
         self.shape_fill = {"rect":False,"ellipse":False}
         self.fill_source = tk.StringVar(value="Активный слой")
-        self.fill_gap = tk.IntVar(value=0)
+        self.fill_gap = tk.IntVar(value=int(self.user_settings.get("fill_gap",0)))
         self.fill_line_layer = tk.StringVar(value="")
         self.selection_box = None
         self.move_anchor = None
@@ -588,7 +588,7 @@ class FrameForge:
         self.zoom=1.0/scale; self.render()
 
     def zoom_wheel(self, event):
-        self.zoom_at(event.x, event.y, 1.12 ** (event.delta / 120 if sys.platform == "win32" else max(-4,min(4,event.delta))))
+        self.zoom_at(event.x, event.y, (1+int(self.user_settings.get("zoom_step",12))/100) ** (event.delta / 120 if sys.platform == "win32" else max(-4,min(4,event.delta))))
 
     def zoom_at(self, sx, sy, factor):
         old_x, old_y, old_scale = self.origin
@@ -643,7 +643,7 @@ class FrameForge:
             frames=state[2] if state[0]=="all" else [state[2]]
             return sum(l["image"].width*l["image"].height*4 for f in frames for l in f)
         total=sum(map(cost,stack))
-        while len(stack)>1 and (len(stack)>40 or total>128*1024*1024):
+        while len(stack)>1 and (len(stack)>getattr(self,"user_settings",{}).get("history_steps",40) or total>getattr(self,"user_settings",{}).get("history_mb",128)*1024*1024):
             total-=cost(stack.pop(0))
 
     def restore(self, stack_from, stack_to):
@@ -685,22 +685,23 @@ class FrameForge:
         s,x,y = self.geometry(); ww,hh = max(1,int(self.w*s)),max(1,int(self.h*s))
         # Cache the checkerboard: do not create hundreds of Tk rectangles per redraw.
         if self.checker_cache is None or self.checker_cache.size != (ww,hh):
-            tile=max(8,int(16*s))
-            checker=Image.new("RGB",(ww,hh),"#c7ced8")
+            tile=max(8,int(self.user_settings.get("checker_tile",16)*s))
+            dark=self.user_settings.get("checker_theme")=="dark"
+            checker=Image.new("RGB",(ww,hh),"#414650" if dark else "#c7ced8")
             cd=ImageDraw.Draw(checker)
             for yy in range(0,hh,tile):
                 for xx in range(0,ww,tile):
                     if ((xx//tile)+(yy//tile))%2==0:
-                        cd.rectangle((xx,yy,min(ww-1,xx+tile-1),min(hh-1,yy+tile-1)),fill="#dce1e8")
+                        cd.rectangle((xx,yy,min(ww-1,xx+tile-1),min(hh-1,yy+tile-1)),fill="#535963" if dark else "#dce1e8")
             self.checker_cache=checker
         base=self.checker_cache.convert("RGBA")
         im=self.compose_frame(self.index).copy()
         if self.onion.get() and self.index>0:
             prev=self.compose_frame(self.index-1)
             tint=Image.new("RGBA",prev.size,(255,75,95,0))
-            tint.putalpha(prev.getchannel("A").point(lambda a:int(a*.22)))
+            tint.putalpha(prev.getchannel("A").point(lambda a:int(a*self.user_settings.get("onion_opacity",22)/100)))
             tint.alpha_composite(im); im=tint
-        base.alpha_composite(im.resize((ww,hh),Image.Resampling.BILINEAR))
+        base.alpha_composite(im.resize((ww,hh),{"fast":Image.Resampling.NEAREST,"balanced":Image.Resampling.BILINEAR,"high":Image.Resampling.LANCZOS}.get(self.user_settings.get("preview_quality"),Image.Resampling.BILINEAR)))
         self.photo=ImageTk.PhotoImage(base.convert("RGB"))
         self.canvas.create_image(x,y,image=self.photo,anchor="nw")
         self.canvas.create_rectangle(x,y,x+ww,y+hh,outline="#718096")
@@ -1018,10 +1019,10 @@ class FrameForge:
                 rgba=self.compose_frame(i)
                 if rgba.size!=(self.w,self.h):
                     rgba=rgba.resize((self.w,self.h),Image.Resampling.LANCZOS)
-                rgb=Image.new("RGBA",(self.w,self.h),(255,255,255,255))
+                rgb=Image.new("RGBA",(self.w,self.h),self.user_settings.get("video_background","white"))
                 rgb.alpha_composite(rgba)
                 if width!=self.w or height!=self.h:
-                    padded=Image.new("RGBA",(width,height),(255,255,255,255))
+                    padded=Image.new("RGBA",(width,height),self.user_settings.get("video_background","white"))
                     padded.alpha_composite(rgb,(0,0))
                     rgb=padded
                 proc.stdin.write(rgb.convert("RGB").tobytes())
@@ -1041,10 +1042,10 @@ class FrameForge:
             messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\\n"+str(exc),parent=self.root)
 
     def export_mp4(self):
-        self.export_video("mp4","libx264",["-crf","18","-movflags","+faststart"])
+        self.export_video("mp4","libx264",["-crf",str(self.user_settings.get("mp4_crf",18)),"-movflags","+faststart"])
 
     def export_webm(self):
-        self.export_video("webm","libvpx-vp9",["-crf","30","-b:v","0"])
+        self.export_video("webm","libvpx-vp9",["-crf",str(self.user_settings.get("webm_crf",30)),"-b:v","0"])
 
     def return_to_menu(self):
         if not self.confirm_discard():return
@@ -1237,34 +1238,65 @@ class MainMenu:
         move(0)
 
     def preferences(self):
-        win=tk.Toplevel(self.root);win.title("Настройки FRAMEFORGE");win.geometry("570x570")
-        win.configure(bg="#111827");win.resizable(False,False);win.transient(self.root);win.grab_set()
-        tk.Label(win,text="Настройки FRAMEFORGE",bg="#111827",fg="#f1f5fc",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=24,pady=(22,4))
-        tk.Label(win,text="Настрой рабочую среду под свой процесс.",bg="#111827",fg="#91a1b8",font=("Segoe UI",10)).pack(anchor="w",padx=24,pady=(0,14))
-        body=tk.Frame(win,bg="#182336");body.pack(fill="both",expand=True,padx=20,pady=8)
-        fps=tk.IntVar(value=int(self.settings.get("default_fps",12)))
-        onion=tk.BooleanVar(value=bool(self.settings.get("onion_skin",True)))
-        quality=tk.StringVar(value=self.settings.get("preview_quality","balanced"))
-        preset=tk.StringVar(value=self.settings.get("default_canvas","HD 1280 × 720"))
-        confirm=tk.BooleanVar(value=bool(self.settings.get("confirm_exit",True)))
-        tips=tk.BooleanVar(value=bool(self.settings.get("show_tips",True)))
-        def label(text,row):
-            tk.Label(body,text=text,bg="#182336",fg="#dce6f5",font=("Segoe UI",10,"bold")).grid(row=row,column=0,sticky="w",padx=16,pady=10)
-        label("FPS по умолчанию",0);ttk.Spinbox(body,from_=1,to=60,textvariable=fps,width=9).grid(row=0,column=1,padx=12)
-        label("Размер нового холста",1);ttk.Combobox(body,textvariable=preset,values=list(PRESETS),state="readonly",width=25).grid(row=1,column=1,padx=12)
-        ttk.Checkbutton(body,text="Включать Onion Skin в новых проектах",variable=onion).grid(row=2,column=0,columnspan=2,sticky="w",padx=16,pady=8)
-        ttk.Checkbutton(body,text="Спрашивать подтверждение при выходе",variable=confirm).grid(row=3,column=0,columnspan=2,sticky="w",padx=16,pady=8)
-        ttk.Checkbutton(body,text="Показывать совет дня в главном меню",variable=tips).grid(row=4,column=0,columnspan=2,sticky="w",padx=16,pady=8)
-        label("Качество предпросмотра",5);ttk.Combobox(body,textvariable=quality,values=["fast","balanced","high"],state="readonly",width=13).grid(row=5,column=1,padx=12)
-        tk.Label(body,text="Параметры сохраняются в профиле Windows и применяются при следующем запуске проекта.",bg="#182336",fg="#91a1b8",wraplength=490,justify="left").grid(row=6,column=0,columnspan=2,sticky="w",padx=16,pady=14)
+        win=tk.Toplevel(self.root);win.title("Настройки FRAMEFORGE");win.geometry("780x580")
+        win.minsize(620,460);win.configure(bg="#20242c");win.transient(self.root);win.grab_set()
+        tk.Label(win,text="Настройки",bg="#20242c",fg="#f1f5fc",font=("Segoe UI",20,"bold")).pack(anchor="w",padx=20,pady=16)
+        tabs=ttk.Notebook(win);tabs.pack(fill="both",expand=True,padx=20,pady=6)
+        values={}; specs={}
+        def page(title):
+            p=ttk.Frame(tabs,padding=18);tabs.add(p,text=title);p.columnconfigure(0,weight=1);return p
+        def field(p,key,title,default,options=None,bounds=None):
+            row=len(p.grid_slaves())//2
+            var=(tk.BooleanVar if isinstance(default,bool) else tk.IntVar if isinstance(default,int) else tk.StringVar)(value=self.settings.get(key,default))
+            values[key]=var;specs[key]=(default,options,bounds)
+            ttk.Label(p,text=title).grid(row=row,column=0,sticky="w",pady=9)
+            if isinstance(default,bool):w=ttk.Checkbutton(p,variable=var)
+            elif options:w=ttk.Combobox(p,textvariable=var,values=options,state="readonly",width=24)
+            else:w=ttk.Spinbox(p,textvariable=var,from_=bounds[0],to=bounds[1],width=12)
+            w.grid(row=row,column=1,sticky="e",padx=8)
+        p=page("Общие")
+        field(p,"confirm_exit","Подтверждение выхода",True)
+        field(p,"show_tips","Советы в главном меню",True)
+        p=page("Рисование")
+        field(p,"default_canvas","Размер нового холста","HD 1280 × 720",list(PRESETS))
+        field(p,"brush_size","Начальная толщина кисти (px)",8,bounds=(1,100))
+        field(p,"brush_opacity","Начальная непрозрачность (%)",100,bounds=(1,100))
+        field(p,"fill_gap","Допустимый разрыв контура (px)",0,bounds=(0,10))
+        p=page("Холст")
+        field(p,"zoom_step","Шаг приближения (%)",12,bounds=(5,30))
+        field(p,"checker_tile","Размер клетки прозрачности (px)",16,bounds=(8,64))
+        field(p,"checker_theme","Фон прозрачности","light",["light","dark"])
+        p=page("Анимация")
+        field(p,"default_fps","FPS нового проекта",12,bounds=(1,60))
+        field(p,"onion_skin","Включать кальку",True)
+        field(p,"onion_opacity","Непрозрачность кальки (%)",22,bounds=(5,80))
+        p=page("Производительность")
+        field(p,"preview_quality","Качество предпросмотра","balanced",["fast","balanced","high"])
+        field(p,"history_steps","Максимум действий в истории",40,bounds=(5,100))
+        field(p,"history_mb","Лимит памяти истории (МБ)",128,bounds=(32,512))
+        p=page("Экспорт")
+        field(p,"mp4_crf","MP4 CRF (меньше — лучше качество)",18,bounds=(0,51))
+        field(p,"webm_crf","WebM CRF (меньше — лучше качество)",30,bounds=(0,63))
+        field(p,"video_background","Фон прозрачных областей видео","white",["white","black"])
+        def reset():
+            for key,var in values.items():var.set(specs[key][0])
         def save():
-            try:f=max(1,min(60,int(fps.get())))
-            except Exception:messagebox.showerror(APP_NAME,"FPS должен быть числом от 1 до 60.",parent=win);return
-            self.settings.update(default_fps=f,onion_skin=onion.get(),preview_quality=quality.get(),
-                                 default_canvas=preset.get(),confirm_exit=confirm.get(),show_tips=tips.get())
-            self.save_settings();win.destroy();messagebox.showinfo(APP_NAME,"Настройки сохранены.",parent=self.root)
-        tk.Button(win,text="СОХРАНИТЬ НАСТРОЙКИ",command=save,bg="#3477bd",fg="white",activebackground="#438bd4",
-                  relief="flat",font=("Segoe UI",10,"bold"),pady=12,cursor="hand2").pack(fill="x",padx=20,pady=(8,18))
+            try:
+                result={}
+                for key,var in values.items():
+                    default,options,bounds=specs[key];v=var.get()
+                    if bounds and not bounds[0]<=v<=bounds[1]:raise ValueError(key)
+                    if options and v not in options:raise ValueError(key)
+                    result[key]=v
+                self.settings.update(result);self.save_settings()
+            except Exception as exc:
+                messagebox.showerror(APP_NAME,"Не удалось сохранить настройки: "+str(exc),parent=win);return
+            win.destroy()
+        bar=ttk.Frame(win,padding=12);bar.pack(fill="x")
+        ttk.Button(bar,text="По умолчанию",command=reset).pack(side="left")
+        ttk.Button(bar,text="Отмена",command=win.destroy).pack(side="right",padx=5)
+        ttk.Button(bar,text="Применить и закрыть",command=save).pack(side="right")
+        tk.Label(win,text="Параметры применяются при следующем открытии редактора.",bg="#20242c",fg="#b0b8c8").pack(pady=(0,10))
 
     def about(self):
         win=tk.Toplevel(self.root);win.title("Авторы FRAMEFORGE");win.geometry("520x480")
