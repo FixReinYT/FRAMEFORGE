@@ -2,9 +2,10 @@ import json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence
 from contour_fill import apply_fill
+from project_io import read_project, write_project
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 BG, PANEL, ALT, BORDER = "#202630", "#293342", "#303b4b", "#3b485b"
 TEXT, MUTED, ACCENT = "#e8edf5", "#a5b2c5", "#68a9e8"
 
@@ -24,7 +25,7 @@ class FrameForge:
         self.root = root
         self.root.title(f"{APP_NAME} {VERSION}")
         self.root.geometry(f"{min(1500,self.root.winfo_screenwidth()-80)}x{min(920,self.root.winfo_screenheight()-100)}")
-        self.root.protocol("WM_DELETE_WINDOW", self.root.destroy)
+        self.root.protocol("WM_DELETE_WINDOW", self.close_project)
         self.root.minsize(900, 600)
         self.root.resizable(True, True)
         self.w, self.h = 1280, 720
@@ -50,6 +51,9 @@ class FrameForge:
         self.fullscreen = False
         self.pan_anchor = None
         self.undo_stack, self.redo_stack = [], []
+        self.dirty=False
+        self.fps.trace_add("write",lambda *_: setattr(self,"dirty",True))
+        self.onion.trace_add("write",lambda *_: setattr(self,"dirty",True))
         self.stroke_before, self.shape_start = None, None
         self.stroke_points = []
         self.shape_fill = {"rect":False,"ellipse":False}
@@ -107,10 +111,10 @@ class FrameForge:
                         activebackground="#365575",activeforeground="white")
         file_menu=tk.Menu(menubar,tearoff=0)
         for label,fn in [("Новый проект",self.new),("Открыть…",self.open),
-                         ("Вставить изображение…",self.insert_image),("Сохранить",self.save),
+                         ("Вставить изображение…",self.insert_image),("Сохранить",self.save),("Сохранить как…",self.save_as),
                          ("Экспорт…",self.export_menu),("Главное меню",self.return_to_menu)]:
             file_menu.add_command(label=label,command=fn)
-        file_menu.add_separator();file_menu.add_command(label="Выход",command=self.root.destroy)
+        file_menu.add_separator();file_menu.add_command(label="Выход",command=self.close_project)
         menubar.add_cascade(label="Файл",menu=file_menu)
         edit=tk.Menu(menubar,tearoff=0)
         edit.add_command(label="Отменить  Ctrl+Z",command=self.undo)
@@ -368,9 +372,11 @@ class FrameForge:
             canvas.create_line(20,8,26,14,fill=accent,width=3)
 
     def bind_shortcuts(self):
-        self.root.bind("<Control-z>", lambda e: self.undo())
+        self.root.bind("<Control-z>", lambda e: (self.undo(),"break")[1])
         self.root.bind("<Control-u>", lambda e: self.redo())
-        self.root.bind("<Control-y>", lambda e: self.redo())
+        self.root.bind("<Control-y>", lambda e: (self.redo(),"break")[1])
+        self.root.bind("<Control-Shift-Z>", lambda e: (self.redo(),"break")[1])
+        self.root.bind("<Control-Shift-S>", lambda e: (self.save_as(),"break")[1])
         self.root.bind("<Control-s>", lambda e: self.save())
         self.root.bind("<Control-o>", lambda e: self.open())
         self.root.bind("<Control-n>", lambda e: self.new())
@@ -467,7 +473,11 @@ class FrameForge:
         result=Image.new("RGBA",(self.w,self.h),(0,0,0,0))
         for layer in self.layer_frames[index]:
             if layer["visible"]:
-                result.alpha_composite(layer["image"])
+                image=layer["image"]
+                opacity=layer.get("opacity",100)
+                if opacity!=100:
+                    image=image.copy(); image.putalpha(image.getchannel("A").point(lambda a:round(a*opacity/100)))
+                result.alpha_composite(image)
         self.frames[index]=result
         return result
 
@@ -490,11 +500,13 @@ class FrameForge:
         if selection: self.active_layer=selection[0]
 
     def toggle_layer_visibility(self):
+        self.snapshot()
         layer=self.layer_frames[self.index][self.active_layer]
         layer["visible"]=not layer["visible"]
         self.compose_frame(self.index); self.refresh_layers(); self.render()
 
     def add_layer(self):
+        self.snapshot()
         self.layer_frames[self.index].append({"name":f"Слой {len(self.layer_frames[self.index])+1}","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True})
         self.active_layer=len(self.layer_frames[self.index])-1
         self.compose_frame(self.index); self.refresh_layers(); self.render()
@@ -503,12 +515,14 @@ class FrameForge:
         layers=self.layer_frames[self.index]
         if len(layers)<=1:
             messagebox.showinfo(APP_NAME,"Нельзя удалить последний слой."); return
+        self.snapshot()
         layers.pop(self.active_layer); self.active_layer=max(0,self.active_layer-1)
         self.compose_frame(self.index); self.refresh_layers(); self.render()
 
     def move_layer(self,delta):
         layers=self.layer_frames[self.index]; target=self.active_layer+delta
         if not 0<=target<len(layers): return
+        self.snapshot()
         layers[self.active_layer],layers[target]=layers[target],layers[self.active_layer]
         self.active_layer=target; self.compose_frame(self.index); self.refresh_layers(); self.render()
 
@@ -595,32 +609,46 @@ class FrameForge:
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Не удалось вставить изображение: {exc}")
 
+    def capture_state(self, all_frames=False, idx=None):
+        idx=self.index if idx is None else idx
+        def clone(frame):
+            return [dict(l,image=l["image"].copy()) for l in frame]
+        payload=[clone(f) for f in self.layer_frames] if all_frames else clone(self.layer_frames[idx])
+        return ("all" if all_frames else "frame",idx,payload,self.active_layer,self.selection_box)
+
     def snapshot(self, all_frames=False):
-        # A paint stroke only snapshots its active frame, not every frame in the project.
-        if all_frames:
-            layers=[[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in frame] for frame in self.layer_frames]
-            state=("all",self.index,layers)
-        else:
-            layers=[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]
-            state=("frame",self.index,layers)
-        self.undo_stack.append(state)
-        if len(self.undo_stack) > 40: self.undo_stack.pop(0)
+        self.undo_stack.append(self.capture_state(all_frames))
         self.redo_stack.clear()
+        self.dirty=True
+        self.limit_history(self.undo_stack)
+
+    def limit_history(self, stack):
+        def cost(state):
+            frames=state[2] if state[0]=="all" else [state[2]]
+            return sum(l["image"].width*l["image"].height*4 for f in frames for l in f)
+        total=sum(map(cost,stack))
+        while len(stack)>1 and (len(stack)>40 or total>128*1024*1024):
+            total-=cost(stack.pop(0))
 
     def restore(self, stack_from, stack_to):
-        if not stack_from: return
-        current=("all",self.index,[[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in frame] for frame in self.layer_frames])
-        state = stack_from.pop()
-        stack_to.append(current)
-        kind, idx, payload = state
+        if not stack_from or self.last is not None: return
+        self.playing=False
+        kind,idx,payload,active,selection=stack_from[-1]
+        stack_to.append(self.capture_state(kind=="all",None if kind=="all" else idx))
+        self.limit_history(stack_to)
+        stack_from.pop()
         if kind=="all":
-            self.index,self.layer_frames=idx,payload
-            self.frames=[self.compose_frame(i) for i in range(len(self.layer_frames))]
+            self.layer_frames=payload
+            self.frames=[None]*len(payload)
+            for i in range(len(payload)): self.compose_frame(i)
         else:
-            self.index=min(idx,len(self.layer_frames)-1)
-            self.layer_frames[self.index]=payload
-            self.compose_frame(self.index)
-        self.refresh(); self.refresh_layers(); self.render(); self.status.set("История действий обновлена")
+            self.layer_frames[idx]=payload
+            self.compose_frame(idx)
+        self.index=idx
+        self.active_layer=active
+        self.selection_box=selection
+        self.dirty=True
+        self.refresh(); self.render(); self.status.set("История действий обновлена")
 
     def undo(self): self.restore(self.undo_stack, self.redo_stack)
     def redo(self): self.restore(self.redo_stack, self.undo_stack)
@@ -675,6 +703,7 @@ class FrameForge:
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
         if tool=="select":
+            self.snapshot()
             self.selection_box=self.active_image().getbbox();self.render()
             self.status.set("Выделено содержимое активного слоя" if self.selection_box else "На слое нет рисунка")
             return
@@ -819,7 +848,7 @@ class FrameForge:
     def duplicate(self):
         self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
     def delete(self):
-        self.snapshot()
+        self.snapshot(all_frames=True)
         if len(self.frames)==1:
             self.layer_frames[0]=[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]
             self.active_layer=1; self.frames[0]=self.compose_frame(0)
@@ -864,75 +893,61 @@ class FrameForge:
         return result or None
 
     def new(self):
+        if not self.confirm_discard():return
         cfg=self.choose_canvas()
         if not cfg:return
         self.w,self.h=cfg["w"],cfg["h"]
         self.zoom=1.0; self.pan_x=0; self.pan_y=0
-        self.snapshot(all_frames=True); self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[self.compose_frame(0)]
-        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear()
+        self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[None]; self.compose_frame(0)
+        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear(); self.dirty=True; self.selection_box=None
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         self.refresh_layers(); self.status.set("Создан новый холст")
 
-    def save(self):
-        path=self.project or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
-        if not path:return
-        import io
-        manifest={"format":"FRAMEFORGE","version":VERSION,"width":self.w,"height":self.h,"fps":self.fps.get(),"active_layer":self.active_layer,"frames":[]}
+    def confirm_discard(self):
+        if not self.dirty: return True
+        answer=messagebox.askyesnocancel(APP_NAME,"Сохранить изменения проекта?",parent=self.root)
+        return False if answer is None else (self.save() if answer else True)
+
+    def close_project(self):
+        if self.confirm_discard(): self.root.destroy()
+
+    def save_as(self):
+        return self.save(True)
+
+    def save(self, save_as=False):
+        path=(None if save_as else self.project) or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
+        if not path:return False
         try:
-            with zipfile.ZipFile(path,"w",zipfile.ZIP_DEFLATED) as archive:
-                for fi,frame in enumerate(self.layer_frames):
-                    frame_data={"layers":[]}
-                    for li,layer in enumerate(frame):
-                        name=f"frames/{fi:05d}/layer_{li:03d}.png"
-                        buf=io.BytesIO(); layer["image"].save(buf,format="PNG")
-                        archive.writestr(name,buf.getvalue())
-                        frame_data["layers"].append({"name":layer["name"],"visible":layer["visible"],"file":name})
-                    manifest["frames"].append(frame_data)
-                archive.writestr("project.json",json.dumps(manifest,ensure_ascii=False,indent=2))
-            self.project=path; self.status.set("Проект сохранён вместе со слоями")
+            write_project(path,self.w,self.h,self.fps.get(),self.layer_frames,self.index,self.active_layer,{"onion":self.onion.get()})
+            self.project=path; self.dirty=False; self.status.set("Проект сохранён вместе со слоями")
+            return True
         except Exception as exc:
             messagebox.showerror(APP_NAME,f"Не удалось сохранить проект: {exc}")
+            return False
 
     def open(self,path=None):
         if path is None:
             path=filedialog.askopenfilename(filetypes=[("FRAMEFORGE project","*.ffg"),("Legacy project","*.json")])
-        if not path:return
+        if not path or not self.confirm_discard():return False
         try:
-            import io
-            if zipfile.is_zipfile(path):
-                with zipfile.ZipFile(path,"r") as archive:
-                    data=json.loads(archive.read("project.json").decode("utf-8"))
-                    self.w,self.h=data["width"],data["height"]
-                    if data["frames"] and isinstance(data["frames"][0],dict):
-                        layer_frames=[]
-                        for frame in data["frames"]:
-                            layers=[]
-                            for layer in frame["layers"]:
-                                image=Image.open(io.BytesIO(archive.read(layer["file"]))).convert("RGBA")
-                                layers.append({"name":layer["name"],"visible":layer.get("visible",True),"image":image})
-                            layer_frames.append(layers)
-                        self.layer_frames=layer_frames
-                        self.frames=[self.compose_frame(i) for i in range(len(layer_frames))]
-                        self.active_layer=min(data.get("active_layer",0),len(layer_frames[0])-1)
-                    else:
-                        self.frames=[Image.open(io.BytesIO(archive.read(name))).convert("RGBA") for name in data["frames"]]
-                        self.layer_frames=[[{"name":"Рисунок","image":im.copy(),"visible":True}] for im in self.frames]
-                        self.active_layer=0
-            else:
-                with open(path,encoding="utf-8") as f:data=json.load(f)
-                folder=os.path.join(os.path.dirname(path),data["folder"])
-                self.frames=[Image.open(os.path.join(folder,n)).convert("RGBA") for n in data["frames"]]
-                self.layer_frames=[[{"name":"Рисунок (старый проект)","image":im.copy(),"visible":True}] for im in self.frames]
-                self.active_layer=0
-            self.w,self.h=data["width"],data["height"]
-            self.fps.set(data.get("fps",12)); self.index=0; self.project=path
-            self.zoom=1.0; self.pan_x=0; self.pan_y=0
-            self.undo_stack.clear(); self.redo_stack.clear()
-            self.canvas_info.config(text=f"{self.w} × {self.h}")
-            self.refresh(); self.refresh_layers(); self.render()
-            self.status.set("Проект загружен")
+            data,layers=read_project(path)
         except Exception as exc:
             messagebox.showerror(APP_NAME,f"Не удалось открыть проект: {exc}")
+            return False
+        self.playing=False
+        self.w,self.h=data["width"],data["height"]
+        self.layer_frames=layers
+        self.frames=[None]*len(layers)
+        for i in range(len(layers)):self.compose_frame(i)
+        self.index=max(0,min(int(data.get("active_frame",0)),len(layers)-1))
+        self.active_layer=max(0,min(int(data.get("active_layer",0)),len(layers[self.index])-1))
+        self.fps.set(data.get("fps",12)); self.project=path if zipfile.is_zipfile(path) else None
+        self.onion.set(data.get("settings",{}).get("onion",self.onion.get()))
+        self.zoom=1.0; self.pan_x=self.pan_y=0
+        self.last=None; self.selection_box=None; self.undo_stack.clear(); self.redo_stack.clear()
+        self.dirty=False
+        self.refresh(); self.render(); self.status.set("Проект загружен")
+        return True
 
     def export_menu(self):
         win=tk.Toplevel(self.root); win.title("Экспорт"); win.configure(bg=PANEL); win.resizable(False,False)
@@ -996,6 +1011,7 @@ class FrameForge:
         self.export_video("webm","libvpx-vp9",["-crf","30","-b:v","0"])
 
     def return_to_menu(self):
+        if not self.confirm_discard():return
         self.playing=False
         for widget in self.root.winfo_children():widget.destroy()
         MainMenu(self.root)
@@ -1135,7 +1151,8 @@ class MainMenu:
         if path is None:path=filedialog.askopenfilename(parent=self.root,filetypes=[("FRAMEFORGE project","*.ffg")])
         if not path:return
         for w in self.root.winfo_children():w.destroy()
-        app=FrameForge(self.root);app.open(path)
+        app=FrameForge(self.root)
+        if not app.open(path):return
         self.settings["recent"]=[path]+[p for p in self.settings.get("recent",[]) if p!=path]
         self.settings["recent"]=self.settings["recent"][:8];self.save_settings()
 
