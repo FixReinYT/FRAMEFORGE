@@ -309,7 +309,17 @@ class FrameForge:
         th=tk.Frame(timeline,bg=PANEL);th.pack(fill="x")
         tk.Label(th,text="ТАЙМЛАЙН КАДРОВ",bg=PANEL,fg=TEXT,font=("Segoe UI",9,"bold")).pack(side="left",padx=12,pady=7)
         self.timeline_hint=tk.Label(th,text="",bg=PANEL,fg=MUTED);self.timeline_hint.pack(side="right",padx=12)
-        self.timeline=tk.Frame(timeline,bg="#1a202b");self.timeline.pack(fill="x",padx=6,pady=(0,6))
+        self.timeline_scroll=ttk.Scrollbar(timeline,orient="horizontal")
+        self.timeline_scroll.pack(side="bottom",fill="x",padx=6,pady=(0,4))
+        self.timeline_canvas=tk.Canvas(timeline,bg="#1a202b",height=76,highlightthickness=0,xscrollcommand=self.timeline_scroll.set)
+        self.timeline_canvas.pack(fill="x",padx=6)
+        self.timeline_scroll.configure(command=self.timeline_canvas.xview)
+        self.timeline=tk.Frame(self.timeline_canvas,bg="#1a202b")
+        self.timeline_canvas.create_window((0,0),window=self.timeline,anchor="nw")
+        self.timeline.bind("<Configure>",lambda e:self.timeline_canvas.configure(scrollregion=self.timeline_canvas.bbox("all")))
+        self.timeline_canvas.bind("<MouseWheel>",self.scroll_timeline)
+        self.timeline_canvas.bind("<Button-4>",self.scroll_timeline)
+        self.timeline_canvas.bind("<Button-5>",self.scroll_timeline)
         footer=tk.Frame(self.root,bg="#171d27",height=24);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
         tk.Label(footer,textvariable=self.status,bg="#171d27",fg="#aab8ca").pack(side="left",padx=10)
         tk.Label(footer,text="FRAMEFORGE  •  THELUCASSDEN",bg="#171d27",fg="#71839b",
@@ -833,12 +843,31 @@ class FrameForge:
         for w in self.timeline.winfo_children(): w.destroy()
         for i in range(len(self.frames)):
             sel=i==self.index
-            tk.Button(self.timeline,text=f"КАДР\n{i+1}",command=lambda n=i:self.select(n),
+            button=tk.Button(self.timeline,text=f"КАДР\n{i+1}",command=lambda n=i:self.select(n),
                 bg="#284d75" if sel else ALT,fg="white",relief="flat",bd=0,width=8,height=3,
-                highlightthickness=1,highlightbackground=ACCENT if sel else BORDER).pack(side="left",padx=3,pady=5)
+                highlightthickness=1,highlightbackground=ACCENT if sel else BORDER)
+            button.pack(side="left",padx=3,pady=5)
+            for event in ("<MouseWheel>","<Button-4>","<Button-5>"):button.bind(event,self.scroll_timeline)
+            if sel:self.timeline_selected=button
         self.counter.config(text=f"КАДР {self.index+1} / {len(self.frames)}")
         self.refresh_layers()
         self.timeline_hint.config(text=f"{len(self.frames)} кадров • {self.fps.get()} FPS")
+
+        self.timeline_canvas.update_idletasks()
+        self.timeline_canvas.configure(scrollregion=self.timeline_canvas.bbox("all"))
+        if self.frames:
+            width=max(1,self.timeline.winfo_reqwidth())
+            left=self.timeline_canvas.canvasx(0)
+            view=self.timeline_canvas.winfo_width()
+            x=self.timeline_selected.winfo_x()
+            right=x+self.timeline_selected.winfo_width()+6
+            if x<left:self.timeline_canvas.xview_moveto(max(0,x-6)/width)
+            elif right>left+view:self.timeline_canvas.xview_moveto(max(0,right-view)/width)
+
+    def scroll_timeline(self,event):
+        direction=-1 if getattr(event,"num",0)==4 or getattr(event,"delta",0)>0 else 1
+        self.timeline_canvas.xview_scroll(direction*3,"units")
+        return "break"
 
     def select(self,n):
         self.index=max(0,min(len(self.frames)-1,n)); self.refresh(); self.render()
