@@ -12,9 +12,11 @@ class ProjectTests(unittest.TestCase):
             p=Path(d)/"Проект # 1.ffg"
             im=Image.new("RGBA",(8,8),(12,34,56,78))
             frames=[[dict(name="Фон",visible=False,opacity=45,image=im),dict(name="Рисунок",visible=True,image=im.copy())] for _ in range(3)]
-            write_project(p,8,8,24,frames,2,1,{"onion":False})
+            continuity={"Head":{"name":"Head","color":"#42d6c4","points":{"0":[2,3],"2":[5,6]}}}
+            write_project(p,8,8,24,frames,2,1,{"onion":False},metadata={"continuity_tracks":continuity})
             data,out=read_project(p)
             self.assertEqual((data["fps"],data["active_frame"],data["settings"]),(24,2,{"onion":False}))
+            self.assertEqual(data["continuity_tracks"],continuity)
             self.assertEqual(len(out),3)
             for frame in out:
                 self.assertEqual(len(frame),2)

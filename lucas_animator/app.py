@@ -1,11 +1,16 @@
-import json, os, sys, tkinter as tk, zipfile, subprocess
+import copy, json, os, sys, tkinter as tk, zipfile, subprocess
 from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
 from PIL import Image, ImageDraw, ImageTk, ImageSequence, ImageFilter, ImageFont
 from contour_fill import apply_fill
 from project_io import read_project, write_project
+from local_accounts import LocalAccountStore, AccountError
+from entitlements import EntitlementService, BillingUnavailable, PRO_FEATURES
+from continuity import normalize_tracks, insert_frame as insert_continuity_frame, delete_frame as delete_continuity_frame, PALETTE as CONTINUITY_PALETTE
+from mascot import draw_mascot, draw_empty_state
+from pro_effects import apply_pro_effect
 
 APP_NAME = "FRAMEFORGE"
-VERSION = "0.10.2"
+VERSION = "0.11.0"
 BG, PANEL, ALT, BORDER = "#202630", "#293342", "#303b4b", "#3b485b"
 TEXT, MUTED, ACCENT = "#e8edf5", "#a5b2c5", "#68a9e8"
 
@@ -19,6 +24,131 @@ PRESETS = {
     "A4 2480 × 3508": (2480, 3508),
     "Пользовательский размер": None,
 }
+
+
+def show_account_center(parent, store, on_change=None):
+    """Local-first account UI. Registration and password reset are real local operations."""
+    win=tk.Toplevel(parent);win.title("Аккаунт FRAMEFORGE");win.geometry("650x560")
+    win.minsize(570,480);win.configure(bg="#111827");win.transient(parent);win.grab_set()
+    header=tk.Frame(win,bg="#17243a");header.pack(fill="x",padx=16,pady=14)
+    mascot=tk.Canvas(header,width=72,height=72,bg="#17243a",highlightthickness=0);mascot.pack(side="left",padx=10,pady=7)
+    draw_mascot(mascot,10,10,50,"wink")
+    tk.Label(header,text="ТВОЙ АККАУНТ",bg="#17243a",fg="#f2f6ff",font=("Segoe UI",17,"bold")).pack(anchor="w",pady=(15,2))
+    tk.Label(header,text="Локальный профиль FRAMEFORGE",bg="#17243a",fg="#9db1cb",font=("Segoe UI",9)).pack(anchor="w")
+    tabs=ttk.Notebook(win);tabs.pack(fill="both",expand=True,padx=16,pady=(0,12))
+    login=tk.Frame(tabs,bg="#172233");register=tk.Frame(tabs,bg="#172233")
+    recovery=tk.Frame(tabs,bg="#172233");profile=tk.Frame(tabs,bg="#172233")
+    tabs.add(login,text="Вход");tabs.add(register,text="Регистрация")
+    tabs.add(recovery,text="Восстановление");tabs.add(profile,text="Профиль")
+
+    def field(parent_frame,label,secret=False):
+        tk.Label(parent_frame,text=label,bg="#172233",fg="#c5d1e2",font=("Segoe UI",9,"bold")).pack(anchor="w",padx=24,pady=(10,3))
+        entry=ttk.Entry(parent_frame,show="●" if secret else "")
+        entry.pack(fill="x",padx=24)
+        return entry
+
+    def finish():
+        win.destroy()
+        if callable(on_change):on_change()
+
+    login_id=field(login,"Логин или email")
+    login_password=field(login,"Пароль",True)
+    def login_action():
+        try:
+            store.login(login_id.get(),login_password.get())
+            finish()
+        except AccountError as exc:
+            messagebox.showerror("Вход FRAMEFORGE",str(exc),parent=win)
+    ttk.Button(login,text="Войти",command=login_action).pack(fill="x",padx=24,pady=18)
+    tk.Label(login,text="Основные инструменты и локальные проекты доступны без аккаунта.",bg="#172233",fg="#91a4be",wraplength=510,justify="left").pack(anchor="w",padx=24)
+
+    reg_user=field(register,"Уникальный логин")
+    reg_email=field(register,"Email")
+    reg_display=field(register,"Отображаемое имя")
+    reg_password=field(register,"Пароль (не менее 10 символов)",True)
+    reg_confirm=field(register,"Повтори пароль",True)
+    tk.Label(register,text="Учётная запись хранится локально на этом компьютере. Email пока не подтверждается письмом.",bg="#172233",fg="#91a4be",wraplength=520,justify="left").pack(anchor="w",padx=24,pady=8)
+    def register_action():
+        if reg_password.get()!=reg_confirm.get():
+            messagebox.showwarning("Регистрация","Пароли не совпадают.",parent=win);return
+        try:
+            user,code=store.create_account(reg_user.get(),reg_email.get(),reg_display.get(),reg_password.get())
+            store.login(reg_user.get(),reg_password.get())
+            messagebox.showinfo("Сохрани код восстановления",
+                "Аккаунт создан: "+user["display_name"]+"\\n\\nКод восстановления (показывается один раз):\\n"+code+
+                "\\n\\nСохрани его в надёжном месте. Отправка кода по email не настроена.",parent=win)
+            finish()
+        except AccountError as exc:
+            messagebox.showerror("Регистрация FRAMEFORGE",str(exc),parent=win)
+    ttk.Button(register,text="Создать аккаунт",command=register_action).pack(fill="x",padx=24,pady=10)
+
+    rec_email=field(recovery,"Email аккаунта")
+    rec_code=field(recovery,"Код восстановления",True)
+    rec_password=field(recovery,"Новый пароль (не менее 10 символов)",True)
+    def recovery_action():
+        try:
+            code=store.reset_password(rec_email.get(),rec_code.get(),rec_password.get())
+            messagebox.showinfo("Пароль изменён","Пароль обновлён. Сохрани новый код восстановления:\\n\\n"+code,parent=win)
+            tabs.select(login)
+        except AccountError as exc:
+            messagebox.showerror("Восстановление пароля",str(exc),parent=win)
+    ttk.Button(recovery,text="Сбросить пароль",command=recovery_action).pack(fill="x",padx=24,pady=18)
+    tk.Label(recovery,text="Сброс выполняется по локальному коду восстановления. Письма не отправляются.",bg="#172233",fg="#91a4be",wraplength=520,justify="left").pack(anchor="w",padx=24)
+
+    current=store.restore_session()
+    if current:
+        tk.Label(profile,text="Вы вошли как "+current["username"],bg="#172233",fg="#8fc1ff",font=("Segoe UI",12,"bold")).pack(anchor="w",padx=24,pady=(20,8))
+        display_var=tk.StringVar(value=current["display_name"])
+        tk.Label(profile,text="Отображаемое имя",bg="#172233",fg="#c5d1e2").pack(anchor="w",padx=24,pady=(8,3))
+        ttk.Entry(profile,textvariable=display_var).pack(fill="x",padx=24)
+        avatar_label=tk.Label(profile,text=("Аватар: "+os.path.basename(current["avatar_path"]) if current.get("avatar_path") else "Стандартный аватар Флика"),bg="#172233",fg="#91a4be")
+        avatar_label.pack(anchor="w",padx=24,pady=8)
+        def choose_avatar():
+            path=filedialog.askopenfilename(parent=win,filetypes=[("Изображения","*.png *.jpg *.jpeg *.webp *.bmp")])
+            if not path:return
+            try:
+                updated=store.set_avatar(current["username"],path)
+                avatar_label.config(text="Аватар: "+os.path.basename(updated["avatar_path"]))
+            except AccountError as exc:
+                messagebox.showerror("Аватар",str(exc),parent=win)
+        def save_profile():
+            try:
+                store.update_profile(current["username"],display_var.get())
+                messagebox.showinfo("Профиль","Изменения профиля сохранены.",parent=win)
+                finish()
+            except AccountError as exc:
+                messagebox.showerror("Профиль",str(exc),parent=win)
+        row=tk.Frame(profile,bg="#172233");row.pack(fill="x",padx=24,pady=12)
+        ttk.Button(row,text="Изменить аватар",command=choose_avatar).pack(side="left")
+        ttk.Button(row,text="Сохранить профиль",command=save_profile).pack(side="right")
+        ttk.Button(profile,text="Выйти из аккаунта",command=lambda:(store.logout(),finish())).pack(anchor="w",padx=24,pady=10)
+    else:
+        tk.Label(profile,text="Войди или создай аккаунт, чтобы настроить профиль.",bg="#172233",fg="#aab8cd",wraplength=500).pack(anchor="w",padx=24,pady=28)
+    tk.Label(win,text="Локальный аккаунт не синхронизируется с другими устройствами. Облачная авторизация и email-провайдер пока не подключены.",bg="#111827",fg="#788aa5",wraplength=600,justify="left").pack(anchor="w",padx=22,pady=(0,12))
+
+
+def show_pro_center(parent, entitlements, account=None):
+    win=tk.Toplevel(parent);win.title("FRAMEFORGE PRO");win.geometry("620x500")
+    win.minsize(540,420);win.configure(bg="#101a29");win.transient(parent);win.grab_set()
+    hero=tk.Frame(win,bg="#172b43");hero.pack(fill="x",padx=18,pady=18)
+    icon=tk.Canvas(hero,width=72,height=72,bg="#172b43",highlightthickness=0);icon.pack(side="left",padx=12,pady=10)
+    draw_mascot(icon,12,12,48,"wink")
+    tk.Label(hero,text="FRAMEFORGE PRO",bg="#172b43",fg="#eaf4ff",font=("Segoe UI",20,"bold")).pack(anchor="w",pady=(16,2))
+    tk.Label(hero,text="Дополнительные возможности. Базовый редактор остаётся бесплатным.",bg="#172b43",fg="#a8c3df",font=("Segoe UI",9)).pack(anchor="w")
+    active=bool(account and entitlements.has("pro_filters",account))
+    status="PRO активна" if active else "Бесплатная версия"
+    tk.Label(win,text="Текущий статус: "+status,bg="#101a29",fg="#72d8bf" if active else "#c3cede",font=("Segoe UI",12,"bold")).pack(anchor="w",padx=24,pady=(4,10))
+    for feature in PRO_FEATURES:
+        card=tk.Frame(win,bg="#1a2a3e",highlightthickness=1,highlightbackground="#2c4562");card.pack(fill="x",padx=22,pady=6)
+        tk.Label(card,text=feature["title"],bg="#1a2a3e",fg="#edf4ff",font=("Segoe UI",11,"bold")).pack(anchor="w",padx=14,pady=(10,3))
+        tk.Label(card,text=feature["description"],bg="#1a2a3e",fg="#a7b9cf",wraplength=520,justify="left").pack(anchor="w",padx=14,pady=(0,10))
+    tk.Label(win,text="FRAMEFORGE PRO не ограничивает базовые кисти, слои, выделение, импорт, историю или обычный экспорт.",bg="#101a29",fg="#a8c3df",wraplength=560,justify="left").pack(anchor="w",padx=24,pady=10)
+    row=tk.Frame(win,bg="#101a29");row.pack(fill="x",padx=22,pady=8)
+    ttk.Button(row,text="Купить подписку",state="disabled").pack(side="left")
+    ttk.Button(row,text="Управление подпиской",state="disabled").pack(side="left",padx=8)
+    tk.Label(win,text="Покупка и управление недоступны: платёжный провайдер ещё не подключён. Приложение не имитирует оплату и не активирует PRO локальным переключателем.",bg="#101a29",fg="#e2b27d",wraplength=560,justify="left").pack(anchor="w",padx=24,pady=(0,12))
+
+
 
 class FrameForge:
     def __init__(self, root):
@@ -39,6 +169,12 @@ class FrameForge:
         try:
             with open(user_cfg,encoding="utf-8") as cfg_file: self.user_settings=json.load(cfg_file)
         except Exception: self.user_settings={}
+        self.account_store = LocalAccountStore()
+        self.current_user = self.account_store.restore_session()
+        self.entitlements = EntitlementService()
+        self.continuity_tracks = {}
+        self.show_continuity = tk.BooleanVar(value=True)
+        self.continuity_track = tk.StringVar(value="")
         self.index, self.fps = 0, tk.IntVar(value=max(1,min(60,int(self.user_settings.get("default_fps",12)))))
         self.size, self.opacity = tk.IntVar(value=int(self.user_settings.get("brush_size",8))), tk.IntVar(value=int(self.user_settings.get("brush_opacity",100)))
         self.color, self.tool = "#202633", tk.StringVar(value="brush")
@@ -126,6 +262,11 @@ class FrameForge:
         image_menu=tk.Menu(menubar,tearoff=0)
         image_menu.add_command(label="Отразить слой по горизонтали",command=self.flip_layer_horizontal)
         image_menu.add_command(label="Отразить слой по вертикали",command=self.flip_layer_vertical)
+        image_menu.add_separator()
+        pro_filters=tk.Menu(image_menu,tearoff=0)
+        for label,effect in [("Свечение Glow — PRO","glow"),("Двухцветное тонирование — PRO","duotone"),("Плёночное зерно — PRO","film_grain")]:
+            pro_filters.add_command(label=label,command=lambda value=effect:self.apply_pro_filter(value))
+        image_menu.add_cascade(label="Фильтры FRAMEFORGE PRO",menu=pro_filters)
         menubar.add_cascade(label="Изображение",menu=image_menu)
         layer_menu=tk.Menu(menubar,tearoff=0)
         layer_menu.add_command(label="Добавить слой",command=self.add_layer)
@@ -147,6 +288,10 @@ class FrameForge:
         view_menu.add_command(label="Масштаб 100%",command=self.actual_size)
         view_menu.add_command(label="Вписать холст",command=self.fit_canvas)
         menubar.add_cascade(label="Вид",menu=view_menu)
+        account_menu=tk.Menu(menubar,tearoff=0)
+        account_menu.add_command(label="Мой аккаунт…",command=self.open_account_center)
+        account_menu.add_command(label="FRAMEFORGE PRO…",command=self.open_pro_center)
+        menubar.add_cascade(label="Аккаунт",menu=account_menu)
         self.root.configure(menu=menubar)
 
         top=tk.Frame(self.root,bg="#171d27",height=48);top.pack(fill="x");top.pack_propagate(False)
@@ -160,6 +305,8 @@ class FrameForge:
         ttk.Button(top,text="↷",width=3,command=self.redo).pack(side="left",padx=2,pady=7)
         tk.Label(top,text="2D ANIMATION WORKSPACE",bg="#171d27",fg="#8494aa",
                  font=("Segoe UI",8,"bold")).pack(side="right",padx=14)
+        ttk.Button(top,text="PRO",command=self.open_pro_center).pack(side="right",padx=4,pady=7)
+        ttk.Button(top,text="Аккаунт",command=self.open_account_center).pack(side="right",padx=4,pady=7)
         ttk.Button(top,text="⛶",width=3,command=self.toggle_fullscreen).pack(side="right",padx=8,pady=7)
 
         # Context toolbar: controls stay visible while the user draws.
@@ -219,7 +366,7 @@ class FrameForge:
                ("magic_wand","Волшебная палочка"),("select","Выделение"),("move","Перемещение"),
                ("transform","Трансформация"),("fill","Заливка"),("gradient","Градиент"),
                ("blur","Размытие"),("sharpen","Резкость"),("stamp","Штамп"),("symmetry","Симметрия"),
-               ("eyedropper","Пипетка")]
+               ("continuity","Нить непрерывности"),("eyedropper","Пипетка")]
         self.tool_buttons={}
         for value,label in tools:
             cell=tk.Frame(tool_inner,bg="#252d39",highlightthickness=1,highlightbackground="#354153",height=43)
@@ -268,9 +415,9 @@ class FrameForge:
         right=self.panel(work,278);right.pack(side="right",fill="y")
         tabs=ttk.Notebook(right);tabs.pack(fill="both",expand=True,padx=5,pady=5)
         tooltab=tk.Frame(tabs,bg=PANEL);colortab=tk.Frame(tabs,bg=PANEL)
-        layertab=tk.Frame(tabs,bg=PANEL);animtab=tk.Frame(tabs,bg=PANEL)
+        layertab=tk.Frame(tabs,bg=PANEL);animtab=tk.Frame(tabs,bg=PANEL);continuitytab=tk.Frame(tabs,bg=PANEL)
         tabs.add(tooltab,text="Инструмент");tabs.add(colortab,text="Цвет")
-        tabs.add(layertab,text="Слои");tabs.add(animtab,text="Анимация")
+        tabs.add(layertab,text="Слои");tabs.add(animtab,text="Анимация");tabs.add(continuitytab,text="Нити")
         self.section(tooltab,"Параметры инструмента")
         tk.Label(tooltab,text="Размер кисти",bg=PANEL,fg=MUTED).pack(anchor="w",padx=12,pady=(8,0))
         ttk.Scale(tooltab,from_=1,to=100,variable=self.size,command=self.size_changed).pack(fill="x",padx=12)
@@ -338,6 +485,16 @@ class FrameForge:
         ttk.Button(nav,text="Следующий →",command=lambda:self.select(self.index+1)).pack(side="left",expand=True,fill="x",padx=2)
         self.counter=tk.Label(animtab,text="КАДР 1 / 1",bg=PANEL,fg=TEXT,font=("Segoe UI",11,"bold"));self.counter.pack(pady=10)
 
+        self.section(continuitytab,"Continuity Threads")
+        ttk.Label(continuitytab,text="Отмечай одну и ту же точку персонажа в разных кадрах. FRAMEFORGE соединит отметки в траекторию, чтобы было проще сохранять пропорции и контролировать движение.",wraplength=245).pack(fill="x",padx=10,pady=6)
+        self.continuity_choice=ttk.Combobox(continuitytab,textvariable=self.continuity_track,state="readonly")
+        self.continuity_choice.pack(fill="x",padx=10,pady=6)
+        ttk.Button(continuitytab,text="+ Новая нить",command=self.new_continuity_track).pack(fill="x",padx=10,pady=3)
+        ttk.Button(continuitytab,text="− Удалить выбранную",command=self.delete_continuity_track).pack(fill="x",padx=10,pady=3)
+        ttk.Button(continuitytab,text="Удалить точку текущего кадра",command=self.clear_continuity_point).pack(fill="x",padx=10,pady=3)
+        ttk.Checkbutton(continuitytab,text="Показывать траектории",variable=self.show_continuity,command=self.render).pack(anchor="w",padx=12,pady=8)
+        ttk.Label(continuitytab,text="Выбери инструмент «Нить непрерывности» и щёлкни по холсту на каждом нужном кадре. Метки сохраняются внутри .FFG.",wraplength=245).pack(fill="x",padx=10,pady=6)
+
         timeline=self.panel(self.root);timeline.pack(fill="x",padx=7,pady=(0,6))
         th=tk.Frame(timeline,bg=PANEL);th.pack(fill="x")
         tk.Label(th,text="ТАЙМЛАЙН КАДРОВ",bg=PANEL,fg=TEXT,font=("Segoe UI",9,"bold")).pack(side="left",padx=12,pady=7)
@@ -353,8 +510,10 @@ class FrameForge:
         self.timeline_canvas.bind("<MouseWheel>",self.scroll_timeline)
         self.timeline_canvas.bind("<Button-4>",self.scroll_timeline)
         self.timeline_canvas.bind("<Button-5>",self.scroll_timeline)
-        footer=tk.Frame(self.root,bg="#171d27",height=24);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
-        tk.Label(footer,textvariable=self.status,bg="#171d27",fg="#aab8ca").pack(side="left",padx=10)
+        footer=tk.Frame(self.root,bg="#171d27",height=26);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
+        status_icon=tk.Canvas(footer,width=28,height=24,bg="#171d27",highlightthickness=0);status_icon.pack(side="left",padx=(5,0))
+        draw_mascot(status_icon,5,4,17,"calm")
+        tk.Label(footer,textvariable=self.status,bg="#171d27",fg="#aab8ca").pack(side="left",padx=7)
         tk.Label(footer,text="FRAMEFORGE  •  THELUCASSDEN",bg="#171d27",fg="#71839b",
                  font=("Segoe UI",8,"bold")).pack(side="right",padx=10)
     def shape_options(self,tool):
@@ -374,7 +533,8 @@ class FrameForge:
     def update_tool_buttons(self):
         labels={"pencil":"Карандаш","brush":"Кисть","airbrush":"Аэрограф","eraser":"Ластик",
                 "line":"Линия","rect":"Прямоугольник","ellipse":"Эллипс","triangle":"Треугольник",
-                "select":"Выделение","move":"Перемещение","fill":"Заливка","eyedropper":"Пипетка"}
+                "select":"Выделение","move":"Перемещение","fill":"Заливка","eyedropper":"Пипетка",
+                "continuity":"Нить непрерывности"}
         selected=self.tool.get()
         if hasattr(self,"context_tool_name"):
             self.context_tool_name.config(text=labels.get(selected,selected))
@@ -416,8 +576,8 @@ class FrameForge:
         elif name in ("polygon","bezier"):
             if name=="polygon":canvas.create_polygon(19,4,31,13,26,28,9,28,5,13,outline=accent,fill="",width=2)
             else:canvas.create_line(5,25,12,5,26,27,32,7,smooth=True,fill=accent,width=3)
-        elif name in ("text","lasso","magic_wand","transform","gradient","blur","sharpen","stamp","symmetry"):
-            glyph={"text":"T","lasso":"⌁","magic_wand":"✦","transform":"↗","gradient":"◩","blur":"◌","sharpen":"✣","stamp":"▣","symmetry":"⇄"}[name]
+        elif name in ("text","lasso","magic_wand","transform","gradient","blur","sharpen","stamp","symmetry","continuity"):
+            glyph={"text":"T","lasso":"⌁","magic_wand":"✦","transform":"↗","gradient":"◩","blur":"◌","sharpen":"✣","stamp":"▣","symmetry":"⇄","continuity":"⌖"}[name]
             canvas.create_text(19,17,text=glyph,fill=accent,font=("Segoe UI",18,"bold"))
 
     def bind_shortcuts(self):
@@ -671,7 +831,7 @@ class FrameForge:
         def clone(frame):
             return [dict(l,image=l["image"].copy()) for l in frame]
         payload=[clone(f) for f in self.layer_frames] if all_frames else clone(self.layer_frames[idx])
-        return ("all" if all_frames else "frame",idx,payload,self.active_layer,self.selection_box)
+        return ("all" if all_frames else "frame",idx,payload,self.active_layer,self.selection_box,copy.deepcopy(getattr(self,"continuity_tracks",{})))
 
     def snapshot(self, all_frames=False):
         self.undo_stack.append(self.capture_state(all_frames))
@@ -690,7 +850,9 @@ class FrameForge:
     def restore(self, stack_from, stack_to):
         if not stack_from or self.last is not None: return
         self.playing=False
-        kind,idx,payload,active,selection=stack_from[-1]
+        state=stack_from[-1]
+        kind,idx,payload,active,selection=state[:5]
+        continuity=state[5] if len(state)>5 else {}
         stack_to.append(self.capture_state(kind=="all",None if kind=="all" else idx))
         self.limit_history(stack_to)
         stack_from.pop()
@@ -704,6 +866,8 @@ class FrameForge:
         self.index=idx
         self.active_layer=active
         self.selection_box=selection
+        self.continuity_tracks=copy.deepcopy(continuity)
+        self.refresh_continuity()
         self.dirty=True
         self.refresh(); self.render(); self.status.set("История действий обновлена")
 
@@ -746,6 +910,10 @@ class FrameForge:
         self.photo=ImageTk.PhotoImage(base.convert("RGB"))
         self.canvas.create_image(x,y,image=self.photo,anchor="nw")
         self.canvas.create_rectangle(x,y,x+ww,y+hh,outline="#718096")
+        if not self.compose_frame(self.index).getchannel("A").getbbox():
+            draw_empty_state(self.canvas,x,y,ww,hh)
+        if self.show_continuity.get():
+            self.draw_continuity_overlay(x,y,s)
         self.origin=(x,y,s)
         self.canvas_info.config(text=f"{self.w} × {self.h}  •  {s*100:.0f}%")
 
@@ -760,6 +928,13 @@ class FrameForge:
     def start(self,e):
         if self.playing:return
         p=self.coords(e); tool=self.tool.get()
+        if tool=="continuity":
+            name=self.continuity_track.get()
+            if not name or name not in self.continuity_tracks:
+                messagebox.showinfo(APP_NAME,"Сначала создай или выбери нить на вкладке «Нити».",parent=self.root);return
+            self.snapshot(all_frames=True)
+            self.continuity_tracks[name]["points"][str(self.index)]=[int(p[0]),int(p[1])]
+            self.dirty=True;self.render();self.status.set(f"Отметка «{name}» добавлена в кадр {self.index+1}");return
         if tool=="select":
             self.selection_box=self.active_image().getbbox();self.render()
             self.status.set("Выделено содержимое активного слоя" if self.selection_box else "На слое нет рисунка")
@@ -867,7 +1042,7 @@ class FrameForge:
             moved=Image.new("RGBA",(self.w,self.h),(0,0,0,0));moved.alpha_composite(self.move_image,(dx,dy))
             self.layer_frames[self.index][self.active_layer]["image"]=moved
             self.compose_frame(self.index);self.render();return
-        if tool in ("select","eyedropper","fill","text","transform","symmetry","magic_wand"):return
+        if tool in ("select","eyedropper","fill","text","transform","symmetry","magic_wand","continuity"):return
         if e.state & 0x0001 and tool in ("brush","pencil","airbrush","eraser","line","rect","ellipse","triangle"):
             dx=p[0]-self.shape_start[0];dy=p[1]-self.shape_start[1]
             if tool in ("rect","ellipse","triangle"):
@@ -1030,16 +1205,75 @@ class FrameForge:
     def select(self,n):
         self.index=max(0,min(len(self.frames)-1,n)); self.refresh(); self.render()
 
+    def refresh_continuity(self):
+        if not hasattr(self,"continuity_choice"):return
+        names=list(self.continuity_tracks)
+        self.continuity_choice.configure(values=names)
+        if self.continuity_track.get() not in names:
+            self.continuity_track.set(names[0] if names else "")
+
+    def new_continuity_track(self):
+        name=simpledialog.askstring(APP_NAME,"Название отслеживаемой точки (например, «Левый глаз»):",parent=self.root)
+        if name is None:return
+        name=name.strip()
+        if not name or len(name)>40:
+            messagebox.showwarning(APP_NAME,"Название должно содержать от 1 до 40 символов.",parent=self.root);return
+        if name in self.continuity_tracks:
+            messagebox.showwarning(APP_NAME,"Нить с таким названием уже существует.",parent=self.root);return
+        self.snapshot(all_frames=True)
+        color=CONTINUITY_PALETTE[len(self.continuity_tracks)%len(CONTINUITY_PALETTE)]
+        self.continuity_tracks[name]={"name":name,"color":color,"points":{}}
+        self.continuity_track.set(name);self.refresh_continuity();self.render()
+        self.status.set("Создана нить: "+name+" — выбери инструмент и отмечай точку в кадрах")
+
+    def delete_continuity_track(self):
+        name=self.continuity_track.get()
+        if name not in self.continuity_tracks:return
+        if not messagebox.askyesno(APP_NAME,"Удалить нить «"+name+"» и все её отметки?",parent=self.root):return
+        self.snapshot(all_frames=True);del self.continuity_tracks[name]
+        self.continuity_track.set("");self.refresh_continuity();self.render();self.status.set("Нить удалена")
+
+    def clear_continuity_point(self):
+        name=self.continuity_track.get()
+        if name not in self.continuity_tracks or str(self.index) not in self.continuity_tracks[name]["points"]:return
+        self.snapshot(all_frames=True);del self.continuity_tracks[name]["points"][str(self.index)]
+        self.render();self.status.set("Отметка текущего кадра удалена")
+
+    def draw_continuity_overlay(self,x,y,s):
+        for name,track in self.continuity_tracks.items():
+            points=sorted(((int(frame),point) for frame,point in track.get("points",{}).items()),key=lambda item:item[0])
+            if not points:continue
+            coords=[(x+point[0]*s,y+point[1]*s) for _,point in points]
+            if len(coords)>1:
+                flat=[value for pair in coords for value in pair]
+                self.canvas.create_line(*flat,fill=track["color"],width=max(1,min(4,int(s*1.5))),dash=(5,4),smooth=True)
+            for frame,point in points:
+                px,py=x+point[0]*s,y+point[1]*s
+                radius=max(3,min(8,4*s)) if frame==self.index else max(2,min(5,2.5*s))
+                self.canvas.create_oval(px-radius,py-radius,px+radius,py+radius,
+                    outline="#ffffff" if frame==self.index else track["color"],
+                    fill=track["color"] if frame==self.index else "",width=2)
+                if frame==self.index:
+                    self.canvas.create_text(px+radius+5,py-radius-4,text=name,anchor="sw",
+                        fill=track["color"],font=("Segoe UI",8,"bold"))
+
     def add(self):
-        self.snapshot(all_frames=True); self.frames.insert(self.index+1,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
+        self.snapshot(all_frames=True);insert_at=self.index+1
+        self.continuity_tracks=insert_continuity_frame(self.continuity_tracks,insert_at)
+        self.frames.insert(insert_at,Image.new("RGBA",(self.w,self.h),(0,0,0,0))); self.layer_frames.insert(insert_at,[{"name":l["name"],"image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(insert_at)
     def duplicate(self):
-        self.snapshot(all_frames=True); self.frames.insert(self.index+1,self.frames[self.index].copy()); self.layer_frames.insert(self.index+1,[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(self.index+1)
+        self.snapshot(all_frames=True);insert_at=self.index+1
+        self.continuity_tracks=insert_continuity_frame(self.continuity_tracks,insert_at,duplicate_from=self.index)
+        self.frames.insert(insert_at,self.frames[self.index].copy()); self.layer_frames.insert(insert_at,[{"name":l["name"],"image":l["image"].copy(),"visible":l["visible"]} for l in self.layer_frames[self.index]]); self.select(insert_at)
     def delete(self):
         self.snapshot(all_frames=True)
         if len(self.frames)==1:
             self.layer_frames[0]=[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]
             self.active_layer=1; self.frames[0]=self.compose_frame(0)
-        else:self.frames.pop(self.index); self.layer_frames.pop(self.index); self.index=min(self.index,len(self.frames)-1)
+            for track in self.continuity_tracks.values():track["points"]={}
+        else:
+            self.continuity_tracks=delete_continuity_frame(self.continuity_tracks,self.index)
+            self.frames.pop(self.index); self.layer_frames.pop(self.index); self.index=min(self.index,len(self.frames)-1)
         self.refresh(); self.render()
 
     def play(self):
@@ -1105,7 +1339,7 @@ class FrameForge:
         path=(None if save_as else self.project) or filedialog.asksaveasfilename(defaultextension=".ffg",filetypes=[("FRAMEFORGE project","*.ffg")])
         if not path:return False
         try:
-            write_project(path,self.w,self.h,self.fps.get(),self.layer_frames,self.index,self.active_layer,{"onion":self.onion.get()})
+            write_project(path,self.w,self.h,self.fps.get(),self.layer_frames,self.index,self.active_layer,{"onion":self.onion.get()},metadata={"continuity_tracks":self.continuity_tracks})
             self.project=path; self.dirty=False; self.status.set("Проект сохранён вместе со слоями")
             return True
         except Exception as exc:
@@ -1124,6 +1358,8 @@ class FrameForge:
         self.playing=False
         self.w,self.h=data["width"],data["height"]
         self.layer_frames=layers
+        self.continuity_tracks=normalize_tracks(data.get("continuity_tracks",{}),len(layers),self.w,self.h)
+        self.refresh_continuity()
         self.frames=[None]*len(layers)
         for i in range(len(layers)):self.compose_frame(i)
         self.index=max(0,min(int(data.get("active_frame",0)),len(layers)-1))
@@ -1198,6 +1434,27 @@ class FrameForge:
     def export_webm(self):
         self.export_video("webm","libvpx-vp9",["-crf",str(self.user_settings.get("webm_crf",30)),"-b:v","0"])
 
+    def open_account_center(self):
+        show_account_center(self.root,self.account_store,self.account_updated)
+
+    def account_updated(self):
+        self.current_user=self.account_store.restore_session()
+        self.root.title(f"{APP_NAME} {VERSION}"+(" — "+self.current_user["display_name"] if self.current_user else ""))
+
+    def open_pro_center(self):
+        show_pro_center(self.root,self.entitlements,self.current_user)
+
+    def apply_pro_filter(self,effect):
+        if not self.entitlements.has("pro_filters",self.current_user):
+            messagebox.showinfo("FRAMEFORGE PRO","Этот фильтр входит в пакет FRAMEFORGE PRO. Покупка пока недоступна: платёжная система ещё не подключена.",parent=self.root);return
+        intensity=simpledialog.askinteger("FRAMEFORGE PRO","Интенсивность эффекта (1–100):",initialvalue=50,minvalue=1,maxvalue=100,parent=self.root)
+        if intensity is None:return
+        try:
+            self.snapshot();self.layer_frames[self.index][self.active_layer]["image"]=apply_pro_effect(self.active_image(),effect,intensity)
+            self.compose_frame(self.index);self.render();self.status.set("Фильтр FRAMEFORGE PRO применён")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME,"Не удалось применить фильтр: "+str(exc),parent=self.root)
+
     def return_to_menu(self):
         if not self.confirm_discard():return
         self.playing=False
@@ -1244,6 +1501,9 @@ class MainMenu:
         except Exception:self.icon=None
         self.settings_path=os.path.join(os.getenv("APPDATA",os.path.expanduser("~")),"FRAMEFORGE","settings.json")
         self.settings=self.load_settings()
+        self.account_store=LocalAccountStore()
+        self.current_user=self.account_store.restore_session()
+        self.entitlements=EntitlementService()
         self.build()
 
     def load_settings(self):
@@ -1271,7 +1531,9 @@ class MainMenu:
         tk.Label(brand,text="▣",bg="#111827",fg="#80b8ff",font=("Segoe UI",25,"bold")).pack(side="left",padx=(0,10))
         tk.Label(brand,text="FRAME",bg="#111827",fg="#f4f7ff",font=("Segoe UI",20,"bold")).pack(side="left")
         tk.Label(brand,text="FORGE",bg="#111827",fg="#75aaff",font=("Segoe UI",20,"bold")).pack(side="left")
-        tk.Label(top,text="2D ANIMATION STUDIO",bg="#111827",fg="#71829e",font=("Segoe UI",9,"bold")).pack(side="right",padx=28)
+        tk.Label(top,text="2D ANIMATION STUDIO",bg="#111827",fg="#71829e",font=("Segoe UI",9,"bold")).pack(side="right",padx=14)
+        tk.Button(top,text="FRAMEFORGE PRO",command=self.open_pro,bg="#20354d",fg="#a8d2ff",activebackground="#2b4968",relief="flat",bd=0,padx=13,pady=8,cursor="hand2").pack(side="right",padx=5)
+        tk.Button(top,text=("Профиль: "+self.current_user["display_name"]) if self.current_user else "Аккаунт · Войти",command=self.open_account,bg="#1a2638",fg="#e5edf8",activebackground="#2b4160",relief="flat",bd=0,padx=13,pady=8,cursor="hand2").pack(side="right",padx=5)
         content=tk.Frame(shell,bg="#0d111b");content.pack(fill="both",expand=True,padx=30,pady=25)
         hero=tk.Frame(content,bg="#17243a",highlightthickness=1,highlightbackground="#2b4164")
         hero.pack(fill="x",pady=(0,20))
@@ -1279,7 +1541,10 @@ class MainMenu:
         tk.Label(left,text="ТВОЯ МАСТЕРСКАЯ АНИМАЦИИ",bg="#17243a",fg="#7fb6ff",font=("Segoe UI",9,"bold")).pack(anchor="w")
         tk.Label(left,text="От первого штриха\nдо ожившей истории.",bg="#17243a",fg="#f4f7ff",font=("Segoe UI",25,"bold"),justify="left").pack(anchor="w",pady=(8,5))
         tk.Label(left,text="Рисуй. Создавай кадры. Задавай движение.",bg="#17243a",fg="#aab8cd",font=("Segoe UI",11)).pack(anchor="w")
-        tk.Label(hero,text="FF",bg="#17243a",fg="#294a77",font=("Segoe UI",64,"bold")).pack(side="right",padx=42)
+        mascot_canvas=tk.Canvas(hero,width=190,height=155,bg="#17243a",highlightthickness=0)
+        mascot_canvas.pack(side="right",padx=28,pady=8)
+        draw_mascot(mascot_canvas,48,20,105,"wave")
+        tk.Label(mascot_canvas,text="ФЛИК · маскот FRAMEFORGE",bg="#17243a",fg="#9ccfc9",font=("Segoe UI",8,"bold")).place(relx=.5,rely=.93,anchor="center")
         area=tk.Frame(content,bg="#0d111b");area.pack(fill="both",expand=True)
         main=tk.Frame(area,bg="#0d111b");main.pack(side="left",fill="both",expand=True)
         side=tk.Frame(area,bg="#141c2a",width=300,highlightthickness=1,highlightbackground="#29374c")
@@ -1315,6 +1580,16 @@ class MainMenu:
         footer=tk.Frame(shell,bg="#0a0e16",height=32);footer.pack(fill="x",side="bottom");footer.pack_propagate(False)
         tk.Label(footer,text=f"FRAMEFORGE {VERSION}  •  THELUCASSDEN",bg="#0a0e16",fg="#66758d",font=("Segoe UI",8,"bold")).pack(side="left",padx=18)
         tk.Label(footer,text="DRAW  •  ANIMATE  •  CREATE",bg="#0a0e16",fg="#66758d",font=("Segoe UI",8)).pack(side="right",padx=18)
+
+    def open_account(self):
+        show_account_center(self.root,self.account_store,self.account_changed)
+
+    def account_changed(self):
+        self.current_user=self.account_store.restore_session()
+        self.build()
+
+    def open_pro(self):
+        show_pro_center(self.root,self.entitlements,self.current_user)
 
     def menu_button(self,parent,icon,title,subtitle,command,primary=False):
         bg="#244b7b" if primary else "#172233";edge="#4c85c4" if primary else "#2c3c53"
@@ -1366,6 +1641,8 @@ class MainMenu:
         state={"page":0}
         top=tk.Frame(win,bg="#111827");top.pack(fill="x",padx=24,pady=(22,10))
         tk.Label(top,text="FRAMEFORGE ACADEMY",bg="#111827",fg="#78b5ff",font=("Segoe UI",9,"bold")).pack(anchor="w")
+        academy_mascot=tk.Canvas(top,width=72,height=72,bg="#111827",highlightthickness=0);academy_mascot.pack(side="right")
+        draw_mascot(academy_mascot,12,12,48,"thinking")
         title=tk.Label(top,text="",bg="#111827",fg="#f2f6ff",font=("Segoe UI",20,"bold"));title.pack(anchor="w",pady=(7,0))
         progress=tk.Label(top,text="",bg="#111827",fg="#8293ad",font=("Segoe UI",9));progress.pack(anchor="w",pady=5)
         body=tk.Frame(win,bg="#1a2638",highlightthickness=1,highlightbackground="#30445f");body.pack(fill="both",expand=True,padx=24,pady=12)
@@ -1491,20 +1768,8 @@ class FrameForgeSplash:
         c.create_rectangle(0,0,640,500,fill="#111827",outline="")
         c.create_oval(95,30,545,480,outline="#24143c",width=3)
         c.create_oval(125,60,515,450,outline="#321b52",width=2)
-        # Panda mascot and clapperboard logo
-        c.create_oval(228,63,302,137,fill="#090711",outline="#70aaff",width=3)
-        c.create_oval(338,63,412,137,fill="#090711",outline="#a65bff",width=3)
-        c.create_oval(226,82,414,240,fill="#f6f1fc",outline="#8cbcff",width=4)
-        c.create_oval(235,139,309,211,fill="#11101a")
-        c.create_oval(331,139,405,211,fill="#11101a")
-        c.create_oval(260,163,286,189,fill="#42dc88")
-        c.create_oval(354,163,380,189,fill="#a65bff")
-        c.create_oval(309,205,331,220,fill="#171321")
-        c.create_rectangle(157,250,483,354,fill="#211735",outline="#a65bff",width=5)
-        c.create_polygon(157,250,483,250,461,213,135,213,fill="#315f98",outline="#a9ceff",width=3)
-        for xx in (165,245,325,405):
-            c.create_polygon(xx,216,xx+34,216,xx+56,247,xx+22,247,fill="#f0e5ff")
-        c.create_polygon(286,276,286,330,337,303,fill="#8dbbff")
+        # Original FRAMEFORGE mascot: FLiK, drawn as crisp vector primitives.
+        draw_mascot(c,225,52,190,"wave")
         c.create_text(320,390,text="FRAMEFORGE",fill="#f6efff",font=("Segoe UI",29,"bold"))
         c.create_text(320,422,text="DRAW  •  ANIMATE  •  CREATE",fill="#b7a4d2",font=("Segoe UI",10,"bold"))
         c.create_rectangle(105,454,535,466,fill="#202e43",outline="#42658e")

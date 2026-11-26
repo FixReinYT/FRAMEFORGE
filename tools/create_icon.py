@@ -1,31 +1,32 @@
 from PIL import Image, ImageDraw
 from pathlib import Path
 
-S=512
-im=Image.new("RGBA",(S,S),(16,10,29,255))
-d=ImageDraw.Draw(im)
-d.rounded_rectangle((18,18,494,494),radius=112,fill=(28,17,48),outline=(171,75,255),width=16)
-# soft inner frame
-d.rounded_rectangle((43,43,469,469),radius=88,outline=(94,47,145),width=5)
-# panda ears and head
-d.ellipse((112,62,236,190),fill=(8,7,16),outline=(184,112,255),width=8)
-d.ellipse((276,62,400,190),fill=(8,7,16),outline=(184,112,255),width=8)
-d.ellipse((126,90,386,328),fill=(248,245,252),outline=(184,112,255),width=8)
-# eye patches and eyes
-d.ellipse((145,170,246,267),fill=(12,10,19))
-d.ellipse((266,170,367,267),fill=(12,10,19))
-d.ellipse((179,199,215,235),fill=(55,224,128))
-d.ellipse((297,199,333,235),fill=(173,89,255))
-d.ellipse((190,204,204,218),fill="white")
-d.ellipse((308,204,322,218),fill="white")
-d.ellipse((240,264,272,286),fill=(15,11,21))
-# clapper board across lower part
-d.rounded_rectangle((82,306,430,423),radius=25,fill=(24,16,40),outline=(173,91,255),width=9)
-d.polygon([(82,306),(430,306),(405,263),(57,263)],fill=(111,49,185),outline=(229,205,255))
-for x in (105,190,275,360):
-    d.polygon([(x,267),(x+40,267),(x+65,302),(x+25,302)],fill=(248,240,255))
-# play symbol
-d.polygon([(230,337),(230,397),(286,367)],fill=(197,128,255))
-out=Path("assets"); out.mkdir(exist_ok=True)
-im.save(out/"frameforge.ico",format="ICO",sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
-im.save(out/"frameforge_icon.png")
+S = 512
+im = Image.new("RGBA", (S, S), (13, 22, 35, 255))
+d = ImageDraw.Draw(im)
+d.rounded_rectangle((16, 16, 496, 496), radius=112, fill=(20, 39, 57), outline=(54, 201, 182), width=14)
+d.rounded_rectangle((40, 40, 472, 472), radius=92, outline=(49, 94, 112), width=5)
+# FLiK: an asymmetrical folded-frame sprite, not a robot or an animal.
+d.ellipse((112, 415, 402, 464), fill=(7, 16, 27, 180))
+body = [(132, 177), (190, 89), (365, 98), (435, 183), (411, 355),
+        (320, 431), (185, 410), (92, 295), (94, 230)]
+d.polygon(body, fill=(54, 201, 182), outline=(166, 255, 240))
+d.line(body + [body[0]], fill=(166, 255, 240), width=12, joint="curve")
+d.polygon([(365, 98), (435, 150), (435, 183), (374, 170)], fill=(255, 141, 112), outline=(255, 224, 181))
+d.line((190, 108, 145, 42), fill=(166, 255, 240), width=13)
+d.ellipse((118, 18, 164, 64), fill=(255, 181, 111), outline=(255, 240, 201), width=6)
+d.ellipse((157, 194, 252, 300), fill=(18, 35, 49), outline=(235, 255, 248), width=7)
+d.ellipse((284, 198, 366, 285), fill=(18, 35, 49), outline=(235, 255, 248), width=7)
+d.ellipse((190, 225, 226, 267), fill=(248, 255, 255))
+d.ellipse((310, 225, 341, 259), fill=(248, 255, 255))
+d.ellipse((200, 232, 216, 250), fill=(17, 39, 54))
+d.ellipse((318, 231, 333, 247), fill=(17, 39, 54))
+d.ellipse((123, 303, 158, 333), fill=(255, 152, 124))
+d.ellipse((368, 300, 402, 330), fill=(255, 152, 124))
+d.arc((225, 285, 310, 367), start=205, end=330, fill=(23, 48, 68), width=10)
+d.rounded_rectangle((124, 354, 164, 394), radius=9, fill=(244, 197, 106))
+d.rounded_rectangle((176, 386, 210, 420), radius=8, fill=(244, 197, 106))
+out = Path("assets")
+out.mkdir(exist_ok=True)
+im.save(out / "frameforge.ico", format="ICO", sizes=[(256,256),(128,128),(64,64),(48,48),(32,32),(16,16)])
+im.save(out / "frameforge_icon.png")

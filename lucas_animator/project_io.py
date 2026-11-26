@@ -1,5 +1,6 @@
 import io, json, os, tempfile, zipfile
 from PIL import Image
+from continuity import normalize_tracks
 
 def read_project(path):
     def decode(source, size):
@@ -34,19 +35,24 @@ def read_project(path):
                     layers.append(dict(name=l["name"],visible=bool(l.get("visible",True)),opacity=opacity,image=decode(io.BytesIO(z.read(l["file"])),size)))
                 if not layers: raise ValueError("Пустой кадр")
                 frames.append(layers)
+            data["continuity_tracks"] = normalize_tracks(data.get("continuity_tracks",{}),len(frames),size[0],size[1])
             return data,frames
     if not str(path).lower().endswith(".json"): raise ValueError("Повреждённый архив FFG")
     with open(path,encoding="utf-8") as f: data=json.load(f)
     size=validate(data)
     folder=os.path.join(os.path.dirname(path),data["folder"])
-    return data,[[dict(name="Рисунок (старый проект)",visible=True,opacity=100,image=decode(os.path.join(folder,n),size))] for n in data["frames"]]
+    legacy_frames=[[dict(name="Рисунок (старый проект)",visible=True,opacity=100,image=decode(os.path.join(folder,n),size))] for n in data["frames"]]
+    data["continuity_tracks"] = normalize_tracks(data.get("continuity_tracks",{}),len(legacy_frames),size[0],size[1])
+    return data,legacy_frames
 
-def write_project(path,w,h,fps,frames,index,active,settings):
+def write_project(path,w,h,fps,frames,index,active,settings,metadata=None):
     path=os.path.abspath(path)
     fd,tmp=tempfile.mkstemp(prefix=".frameforge-",suffix=".ffg",dir=os.path.dirname(path))
     os.close(fd)
     try:
-        manifest=dict(format="FRAMEFORGE",version="0.10.1",width=w,height=h,fps=fps,active_frame=index,active_layer=active,settings=settings,frames=[])
+        metadata=metadata or {}
+        continuity=normalize_tracks(metadata.get("continuity_tracks",{}),len(frames),w,h)
+        manifest=dict(format="FRAMEFORGE",version="0.11.0",width=w,height=h,fps=fps,active_frame=index,active_layer=active,settings=settings,continuity_tracks=continuity,frames=[])
         with zipfile.ZipFile(tmp,"w",zipfile.ZIP_DEFLATED) as z:
             for fi,frame in enumerate(frames):
                 entry=dict(layers=[])
