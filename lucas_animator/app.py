@@ -89,7 +89,7 @@ def show_account_center(parent, store, on_change=None):
         try:
             code=store.reset_password(rec_email.get(),rec_code.get(),rec_password.get())
             messagebox.showinfo("Пароль изменён","Пароль обновлён. Сохрани новый код восстановления:\\n\\n"+code,parent=win)
-            tabs.select(login)
+            finish()
         except AccountError as exc:
             messagebox.showerror("Восстановление пароля",str(exc),parent=win)
     ttk.Button(recovery,text="Сбросить пароль",command=recovery_action).pack(fill="x",padx=24,pady=18)
@@ -101,14 +101,30 @@ def show_account_center(parent, store, on_change=None):
         display_var=tk.StringVar(value=current["display_name"])
         tk.Label(profile,text="Отображаемое имя",bg="#172233",fg="#c5d1e2").pack(anchor="w",padx=24,pady=(8,3))
         ttk.Entry(profile,textvariable=display_var).pack(fill="x",padx=24)
+        avatar_preview=tk.Canvas(profile,width=104,height=104,bg="#172233",highlightthickness=0)
+        avatar_preview.pack(anchor="w",padx=24,pady=(0,5))
+        def render_avatar(path=None):
+            avatar_preview.delete("all")
+            if path and os.path.isfile(path):
+                try:
+                    with Image.open(path) as source:
+                        avatar=source.convert("RGBA").resize((88,88),Image.Resampling.LANCZOS)
+                    win.avatar_photo=ImageTk.PhotoImage(avatar)
+                    avatar_preview.create_image(52,52,image=win.avatar_photo)
+                    return
+                except Exception:
+                    pass
+            draw_mascot(avatar_preview,12,12,80,"calm")
+        render_avatar(current.get("avatar_path"))
         avatar_label=tk.Label(profile,text=("Аватар: "+os.path.basename(current["avatar_path"]) if current.get("avatar_path") else "Стандартный аватар Флика"),bg="#172233",fg="#91a4be")
-        avatar_label.pack(anchor="w",padx=24,pady=8)
+        avatar_label.pack(anchor="w",padx=24,pady=4)
         def choose_avatar():
             path=filedialog.askopenfilename(parent=win,filetypes=[("Изображения","*.png *.jpg *.jpeg *.webp *.bmp")])
             if not path:return
             try:
                 updated=store.set_avatar(current["username"],path)
                 avatar_label.config(text="Аватар: "+os.path.basename(updated["avatar_path"]))
+                render_avatar(updated["avatar_path"])
             except AccountError as exc:
                 messagebox.showerror("Аватар",str(exc),parent=win)
         def save_profile():
@@ -298,7 +314,7 @@ class FrameForge:
         brand=tk.Frame(top,bg="#171d27");brand.pack(side="left",padx=(14,20))
         tk.Label(brand,text="FRAME",bg="#171d27",fg="#edf3fb",font=("Segoe UI",15,"bold")).pack(side="left")
         tk.Label(brand,text="FORGE",bg="#171d27",fg="#77b5f5",font=("Segoe UI",15,"bold")).pack(side="left")
-        tk.Label(brand,text="  0.10",bg="#171d27",fg="#8190a5",font=("Segoe UI",8,"bold")).pack(side="left",pady=(8,0))
+        tk.Label(brand,text="  0.11",bg="#171d27",fg="#8190a5",font=("Segoe UI",8,"bold")).pack(side="left",pady=(8,0))
         ttk.Button(top,text="Открыть",command=self.open).pack(side="left",padx=3,pady=7)
         ttk.Button(top,text="Сохранить",command=self.save,style="Accent.TButton").pack(side="left",padx=3,pady=7)
         ttk.Button(top,text="↶",width=3,command=self.undo).pack(side="left",padx=(15,2),pady=7)
@@ -932,7 +948,7 @@ class FrameForge:
             name=self.continuity_track.get()
             if not name or name not in self.continuity_tracks:
                 messagebox.showinfo(APP_NAME,"Сначала создай или выбери нить на вкладке «Нити».",parent=self.root);return
-            self.snapshot(all_frames=True)
+            self.snapshot()
             self.continuity_tracks[name]["points"][str(self.index)]=[int(p[0]),int(p[1])]
             self.dirty=True;self.render();self.status.set(f"Отметка «{name}» добавлена в кадр {self.index+1}");return
         if tool=="select":
@@ -1220,7 +1236,7 @@ class FrameForge:
             messagebox.showwarning(APP_NAME,"Название должно содержать от 1 до 40 символов.",parent=self.root);return
         if name in self.continuity_tracks:
             messagebox.showwarning(APP_NAME,"Нить с таким названием уже существует.",parent=self.root);return
-        self.snapshot(all_frames=True)
+        self.snapshot()
         color=CONTINUITY_PALETTE[len(self.continuity_tracks)%len(CONTINUITY_PALETTE)]
         self.continuity_tracks[name]={"name":name,"color":color,"points":{}}
         self.continuity_track.set(name);self.refresh_continuity();self.render()
@@ -1230,13 +1246,13 @@ class FrameForge:
         name=self.continuity_track.get()
         if name not in self.continuity_tracks:return
         if not messagebox.askyesno(APP_NAME,"Удалить нить «"+name+"» и все её отметки?",parent=self.root):return
-        self.snapshot(all_frames=True);del self.continuity_tracks[name]
+        self.snapshot();del self.continuity_tracks[name]
         self.continuity_track.set("");self.refresh_continuity();self.render();self.status.set("Нить удалена")
 
     def clear_continuity_point(self):
         name=self.continuity_track.get()
         if name not in self.continuity_tracks or str(self.index) not in self.continuity_tracks[name]["points"]:return
-        self.snapshot(all_frames=True);del self.continuity_tracks[name]["points"][str(self.index)]
+        self.snapshot();del self.continuity_tracks[name]["points"][str(self.index)]
         self.render();self.status.set("Отметка текущего кадра удалена")
 
     def draw_continuity_overlay(self,x,y,s):
@@ -1320,7 +1336,7 @@ class FrameForge:
         self.w,self.h=cfg["w"],cfg["h"]
         self.zoom=1.0; self.pan_x=0; self.pan_y=0
         self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[None]; self.compose_frame(0)
-        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear(); self.dirty=True; self.selection_box=None
+        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear(); self.continuity_tracks={}; self.continuity_track.set(""); self.dirty=True; self.selection_box=None
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         self.refresh_layers(); self.status.set("Создан новый холст")
 
@@ -1646,10 +1662,72 @@ class MainMenu:
         title=tk.Label(top,text="",bg="#111827",fg="#f2f6ff",font=("Segoe UI",20,"bold"));title.pack(anchor="w",pady=(7,0))
         progress=tk.Label(top,text="",bg="#111827",fg="#8293ad",font=("Segoe UI",9));progress.pack(anchor="w",pady=5)
         body=tk.Frame(win,bg="#1a2638",highlightthickness=1,highlightbackground="#30445f");body.pack(fill="both",expand=True,padx=24,pady=12)
-        desc=tk.Label(body,text="",bg="#1a2638",fg="#e1e9f6",font=("Segoe UI",12),wraplength=660,justify="left",anchor="nw")
-        desc.pack(fill="both",expand=True,padx=24,pady=(24,12))
+        demo=tk.Canvas(body,height=180,bg="#101a29",highlightthickness=0)
+        demo.pack(fill="x",padx=16,pady=(14,8))
+        desc=tk.Label(body,text="",bg="#1a2638",fg="#e1e9f6",font=("Segoe UI",11),wraplength=660,justify="left",anchor="nw")
+        desc.pack(fill="x",padx=20,pady=(8,8))
         task=tk.Label(body,text="",bg="#243651",fg="#a9ceff",font=("Segoe UI",10),wraplength=650,justify="left",anchor="w")
-        task.pack(fill="x",padx=18,pady=(0,18),ipady=12)
+        task.pack(fill="x",padx=18,pady=(0,10),ipady=10)
+        demo_play=tk.Button(body,text="▶ Показать движение",bg="#244d79",fg="white",activebackground="#32679f",relief="flat",padx=14,pady=7)
+        demo_play.pack(anchor="e",padx=18,pady=(0,12))
+        def draw_demo(page):
+            demo.delete("all")
+            demo.update_idletasks()
+            width=max(620,demo.winfo_width())
+            gap=10;card_w=(width-4*gap)/3
+            labels=[
+                ("ХОЛСТ","512 × 512","Создай рабочую область"),
+                ("КИСТЬ","Размер • цвет • нажим","Проведи пробный штрих"),
+                ("СЛОИ","Фон / Персонаж / Детали","Разделяй элементы"),
+                ("КАДРЫ","Ключевая поза → промежуток","Меняй положение объекта"),
+                ("ONION SKIN","Предыдущий / текущий / следующий","Сверяй траекторию"),
+                ("ЭКСПОРТ","FFG • GIF • MP4 • WebM","Сохрани результат")
+            ]
+            for i in range(3):
+                x0=gap+i*(card_w+gap);x1=x0+card_w
+                demo.create_rectangle(x0,8,x1,171,fill="#1a2b40",outline="#304b68",width=1)
+                demo.create_text(x0+12,24,text=labels[page][0] if i==0 else ("ШАГ 0"+str(i+1)),anchor="w",fill="#83baff",font=("Segoe UI",8,"bold"))
+                if page==0:
+                    demo.create_rectangle(x0+card_w*.28,48,x0+card_w*.72,125,outline="#7fb8ff",width=2)
+                    demo.create_text(x0+card_w*.5,88,text="512",fill="#eaf3ff",font=("Segoe UI",15,"bold"))
+                elif page==1:
+                    for j,wid in enumerate((3,7,12)):
+                        yy=55+j*24
+                        demo.create_line(x0+18,yy,x1-18,yy,fill=("#76baff" if j==0 else "#44d2bd"),width=wid,capstyle="round")
+                elif page==2:
+                    for j,col in enumerate(("#3c719d","#2eaa9b","#d28a62")):
+                        yy=49+j*31
+                        demo.create_rectangle(x0+28,yy,x1-28,yy+23,fill=col,outline="#dceaff")
+                        demo.create_text(x1-38,yy+11,text=str(j+1),fill="white",font=("Segoe UI",8,"bold"))
+                elif page==3:
+                    demo.create_line(x0+30,112,x1-30,58,fill="#5c83ac",width=2,dash=(4,3))
+                    for j,xx in enumerate((x0+40,x0+card_w*.5,x1-40)):
+                        yy=(112,85,58)[j]
+                        demo.create_oval(xx-10,yy-10,xx+10,yy+10,fill=("#ff9a73" if j==0 else "#42d6c4"),outline="white",width=1)
+                elif page==4:
+                    demo.create_oval(x0+card_w*.24-18,65,x0+card_w*.24+18,101,outline="#f0717d",width=4)
+                    demo.create_oval(x0+card_w*.76-18,65,x0+card_w*.76+18,101,outline="#74d49a",width=4)
+                    demo.create_oval(x0+card_w*.5-20,63,x0+card_w*.5+20,103,fill="#78b8ff",outline="white",width=2)
+                else:
+                    for j,txt in enumerate(("PNG","GIF","MP4")):
+                        xx=x0+28+j*(card_w-56)/3
+                        demo.create_rectangle(xx,58,xx+52,105,fill="#263d58",outline="#80b8ff")
+                        demo.create_text(xx+26,81,text=txt,fill="#f0f5ff",font=("Segoe UI",9,"bold"))
+                demo.create_text(x0+12,137,text=labels[page][1] if i==0 else labels[page][2],anchor="w",fill="#edf4ff",font=("Segoe UI",8,"bold"))
+                demo.create_text(x0+12,154,text=("Визуальная схема" if i==0 else "Проверь на своём проекте"),anchor="w",fill="#91a8c3",font=("Segoe UI",7))
+        def play_demo():
+            if state.get("animating"):return
+            state["animating"]=True
+            positions=[(.18,.64),(.34,.52),(.50,.40),(.66,.52),(.82,.64),(.66,.52),(.50,.40),(.34,.52),(.18,.64)]
+            def step(i):
+                demo.delete("demo-motion")
+                w=max(620,demo.winfo_width());cx=10+(w-20)*positions[i][0];cy=10+160*positions[i][1]
+                demo.create_oval(cx-11,cy-11,cx+11,cy+11,fill="#ff9a73",outline="#fff1dc",width=2,tags="demo-motion")
+                demo.create_line(cx,cy+15,cx,cy+31,fill="#ff9a73",width=2,tags="demo-motion")
+                if i+1<len(positions):win.after(130,lambda:step(i+1))
+                else:state["animating"]=False
+            step(0)
+        demo_play.config(command=play_demo)
         nav=tk.Frame(win,bg="#111827");nav.pack(fill="x",padx=24,pady=(0,20))
         back=tk.Button(nav,text="← Назад",command=lambda:move(-1),bg="#202e43",fg="white",relief="flat",padx=18,pady=10)
         back.pack(side="left")
@@ -1659,6 +1737,9 @@ class MainMenu:
             state["page"]=max(0,min(len(pages)-1,state["page"]+delta))
             a,b,d=pages[state["page"]]
             title.config(text=a);desc.config(text=b);task.config(text=d)
+            moods=("wave","wink","thinking","happy","thinking","wink")
+            academy_mascot.delete("mascot");draw_mascot(academy_mascot,12,12,48,moods[state["page"]])
+            draw_demo(state["page"])
             progress.config(text=f"Урок {state['page']+1} из {len(pages)}")
             back.config(state="normal" if state["page"] else "disabled")
             nxt.config(text="Готово ✓" if state["page"]==len(pages)-1 else "Далее →",

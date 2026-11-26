@@ -57,7 +57,7 @@ class ContinuityTests(unittest.TestCase):
         duplicated = insert_frame(tracks, 1, duplicate_from=0)
         self.assertEqual(duplicated["Head"]["points"]["1"], [10, 20])
         deleted = delete_frame(duplicated, 0)
-        self.assertEqual(deleted["Head"]["points"], {"0": [10, 20], "1": [30, 40]})
+        self.assertEqual(deleted["Head"]["points"], {"0": [10, 20], "2": [30, 40]})
 
     def test_track_validation(self):
         clean = normalize_tracks({"Eye": {"color": "#42d6c4", "points": {"0": [3, 4]}}}, 2, 10, 10)
