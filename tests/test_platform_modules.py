@@ -38,10 +38,25 @@ class AccountTests(unittest.TestCase):
             with self.assertRaises(AccountError):
                 store.login("artist", "wrong-password")
 
+    def test_profile_requires_matching_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = LocalAccountStore(directory)
+            store.create_account("artist", "a@example.test", "Artist", "long-password-1")
+            store.create_account("other", "b@example.test", "Other", "long-password-2")
+            with self.assertRaises(AccountError):
+                store.update_profile("artist", "Changed")
+            store.login("artist", "long-password-1")
+            with self.assertRaises(AccountError):
+                store.update_profile("other", "Changed")
+            self.assertEqual(store.update_profile("ARTIST", "New Name")["display_name"], "New Name")
+            store.logout()
+            self.assertIsNone(store.restore_session())
+
     def test_avatar_is_normalized(self):
         with tempfile.TemporaryDirectory() as directory:
             store = LocalAccountStore(directory)
             store.create_account("artist", "a@example.test", "Artist", "long-password-1")
+            store.login("artist", "long-password-1")
             source = Path(directory) / "source.png"
             Image.new("RGB", (20, 30), "red").save(source)
             profile = store.set_avatar("artist", str(source))

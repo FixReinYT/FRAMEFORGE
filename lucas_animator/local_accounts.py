@@ -158,11 +158,16 @@ class LocalAccountStore:
             db.execute("DELETE FROM sessions WHERE username_norm=?", (username_norm,))
             db.execute("INSERT INTO sessions(token_hash,username_norm,expires_at) VALUES(?,?,?)",
                        (self._token_hash(token), username_norm, expiry))
-        self.session_file.write_text(token, encoding="utf-8")
+        # Create the credential with restrictive permissions before writing it.
+        import tempfile
+        fd, temp = tempfile.mkstemp(prefix=".session-", dir=self.directory)
         try:
-            os.chmod(self.session_file, 0o600)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(token)
+            os.replace(temp, self.session_file)
+        finally:
+            if os.path.exists(temp):
+                os.unlink(temp)
 
     def login(self, identifier: str, password: str):
         identifier_norm = (identifier or "").strip().casefold()
@@ -182,7 +187,7 @@ class LocalAccountStore:
     def restore_session(self):
         try:
             token = self.session_file.read_text(encoding="utf-8").strip()
-        except OSError:
+        except (OSError, UnicodeError):
             return None
         if not token:
             return None
@@ -234,13 +239,18 @@ class LocalAccountStore:
                  recovery_salt, self._derive(new_recovery_code, recovery_salt), row["username_norm"])
             )
             db.execute("DELETE FROM sessions WHERE username_norm=?", (row["username_norm"],))
-        try:
-            self.session_file.unlink()
-        except OSError:
-            pass
+        # Invalidate only the reset account; preserve another user’s local session.
+        self.restore_session()
         return new_recovery_code
 
+    def _require_session(self, username):
+        profile = self.restore_session()
+        if not profile or profile["username"].casefold() != (username or "").casefold():
+            raise AccountError("Войди в этот аккаунт, чтобы изменить профиль.")
+        return profile
+
     def update_profile(self, username: str, display_name: str):
+        self._require_session(username)
         display_name = (display_name or "").strip()
         if not display_name or len(display_name) > 40:
             raise AccountError("Имя профиля должно содержать от 1 до 40 символов.")
@@ -254,12 +264,13 @@ class LocalAccountStore:
         return self._profile(row)
 
     def set_avatar(self, username: str, source_path: str):
+        self._require_session(username)
         try:
             with Image.open(source_path) as source:
                 avatar = ImageOps.fit(source.convert("RGBA"), (256, 256), method=Image.Resampling.LANCZOS)
         except Exception as exc:
             raise AccountError("Не удалось прочитать изображение аватара.") from exc
-        safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", username)
+        safe_name = hashlib.sha256(username.casefold().encode("utf-8")).hexdigest()
         target = self.avatar_dir / (safe_name + ".png")
         temp = target.with_suffix(".tmp.png")
         avatar.save(temp, format="PNG")

@@ -26,9 +26,21 @@ PRESETS = {
 }
 
 
+def load_optional_account():
+    try:
+        store=LocalAccountStore()
+        return store,store.restore_session()
+    except Exception:
+        # Account storage must never block the offline editor.
+        return None,None
+
+
 def show_account_center(parent, store, on_change=None):
     """Local-first account UI. Registration and password reset are real local operations."""
-    win=tk.Toplevel(parent);win.title("Аккаунт FRAMEFORGE");win.geometry("650x560")
+    if store is None:
+        messagebox.showerror("Аккаунт FRAMEFORGE","Хранилище аккаунтов недоступно. Редактор продолжает работать без регистрации.",parent=parent)
+        return
+    win=tk.Toplevel(parent);win.title("Аккаунт FRAMEFORGE");win.geometry("660x690")
     win.minsize(570,480);win.configure(bg="#111827");win.transient(parent);win.grab_set()
     header=tk.Frame(win,bg="#17243a");header.pack(fill="x",padx=16,pady=14)
     mascot=tk.Canvas(header,width=72,height=72,bg="#17243a",highlightthickness=0);mascot.pack(side="left",padx=10,pady=7)
@@ -97,10 +109,12 @@ def show_account_center(parent, store, on_change=None):
 
     current=store.restore_session()
     if current:
+        tabs.select(profile)
         tk.Label(profile,text="Вы вошли как "+current["username"],bg="#172233",fg="#8fc1ff",font=("Segoe UI",12,"bold")).pack(anchor="w",padx=24,pady=(20,8))
         display_var=tk.StringVar(value=current["display_name"])
         tk.Label(profile,text="Отображаемое имя",bg="#172233",fg="#c5d1e2").pack(anchor="w",padx=24,pady=(8,3))
         ttk.Entry(profile,textvariable=display_var).pack(fill="x",padx=24)
+        tk.Label(profile,text="Email: "+current["email"],bg="#172233",fg="#91a4be").pack(anchor="w",padx=24,pady=4)
         avatar_preview=tk.Canvas(profile,width=104,height=104,bg="#172233",highlightthickness=0)
         avatar_preview.pack(anchor="w",padx=24,pady=(0,5))
         def render_avatar(path=None):
@@ -185,8 +199,7 @@ class FrameForge:
         try:
             with open(user_cfg,encoding="utf-8") as cfg_file: self.user_settings=json.load(cfg_file)
         except Exception: self.user_settings={}
-        self.account_store = LocalAccountStore()
-        self.current_user = self.account_store.restore_session()
+        self.account_store,self.current_user=load_optional_account()
         self.entitlements = EntitlementService()
         self.continuity_tracks = {}
         self.show_continuity = tk.BooleanVar(value=True)
@@ -597,19 +610,22 @@ class FrameForge:
             canvas.create_text(19,17,text=glyph,fill=accent,font=("Segoe UI",18,"bold"))
 
     def bind_shortcuts(self):
-        # bind_all receives shortcuts from the canvas, tool buttons and dockers.
-        # Returning "break" prevents duplicate class-level handling.
-        self.root.bind_all("<Control-z>", lambda e: (self.undo(), "break")[1])
-        self.root.bind_all("<Control-y>", lambda e: (self.redo(), "break")[1])
-        self.root.bind_all("<Control-Shift-Z>", lambda e: (self.redo(), "break")[1])
-        self.root.bind_all("<Control-Shift-S>", lambda e: (self.save_as(), "break")[1])
-        self.root.bind_all("<Control-s>", lambda e: (self.save(), "break")[1])
-        self.root.bind_all("<Control-o>", lambda e: (self.open(), "break")[1])
-        self.root.bind_all("<Control-n>", lambda e: (self.new(), "break")[1])
-        self.root.bind_all("<Control-q>", lambda e: (self.close_project(), "break")[1])
-        self.root.bind_all("<space>", lambda e: (self.play(), "break")[1])
-        self.root.bind_all("<F11>", lambda e: (self.toggle_fullscreen(), "break")[1])
-        self.root.bind_all("<Escape>", lambda e: (self.exit_fullscreen(), "break")[1])
+        # Do not hijack typing in dialogs or invoke callbacks from a destroyed editor.
+        def shortcut(event, action, allow_entry=False):
+            if not self.canvas.winfo_exists() or event.widget.winfo_toplevel()!=self.root:
+                return
+            if not allow_entry and isinstance(event.widget,(tk.Entry,tk.Text,ttk.Entry,ttk.Spinbox,ttk.Combobox)):
+                return
+            action()
+            return "break"
+        self.editor_shortcuts={
+            "<Control-z>":self.undo,"<Control-y>":self.redo,"<Control-u>":self.redo,
+            "<Control-Shift-Z>":self.redo,"<Control-Shift-S>":self.save_as,
+            "<Control-s>":self.save,"<Control-o>":self.open,"<Control-n>":self.new,
+            "<Control-q>":self.close_project,"<space>":self.play,
+            "<F11>":self.toggle_fullscreen,"<Escape>":self.exit_fullscreen}
+        for event,action in self.editor_shortcuts.items():
+            self.root.bind_all(event,lambda e,fn=action:shortcut(e,fn))
 
     def size_changed(self, v): self.size_label.config(text=f"{int(float(v))} px")
     def opacity_changed(self, v): self.opacity_label.config(text=f"{int(float(v))}%")
@@ -917,6 +933,7 @@ class FrameForge:
             self.checker_cache=checker
         base=self.checker_cache.convert("RGBA")
         im=self.compose_frame(self.index).copy()
+        is_empty=not im.getchannel("A").getbbox()
         if self.onion.get() and self.index>0:
             prev=self.compose_frame(self.index-1)
             tint=Image.new("RGBA",prev.size,(255,75,95,0))
@@ -926,9 +943,9 @@ class FrameForge:
         self.photo=ImageTk.PhotoImage(base.convert("RGB"))
         self.canvas.create_image(x,y,image=self.photo,anchor="nw")
         self.canvas.create_rectangle(x,y,x+ww,y+hh,outline="#718096")
-        if not self.compose_frame(self.index).getchannel("A").getbbox():
+        if is_empty and not self.playing:
             draw_empty_state(self.canvas,x,y,ww,hh)
-        if self.show_continuity.get():
+        if self.show_continuity.get() and not self.playing:
             self.draw_continuity_overlay(x,y,s)
         self.origin=(x,y,s)
         self.canvas_info.config(text=f"{self.w} × {self.h}  •  {s*100:.0f}%")
@@ -1474,6 +1491,11 @@ class FrameForge:
     def return_to_menu(self):
         if not self.confirm_discard():return
         self.playing=False
+        for event in self.editor_shortcuts:
+            self.root.unbind_all(event)
+        for event in ("<MouseWheel>","<Button-4>","<Button-5>"):
+            self.root.unbind_all(event)
+        self.root.configure(menu="")
         for widget in self.root.winfo_children():widget.destroy()
         MainMenu(self.root)
 
@@ -1517,8 +1539,7 @@ class MainMenu:
         except Exception:self.icon=None
         self.settings_path=os.path.join(os.getenv("APPDATA",os.path.expanduser("~")),"FRAMEFORGE","settings.json")
         self.settings=self.load_settings()
-        self.account_store=LocalAccountStore()
-        self.current_user=self.account_store.restore_session()
+        self.account_store,self.current_user=load_optional_account()
         self.entitlements=EntitlementService()
         self.build()
 
