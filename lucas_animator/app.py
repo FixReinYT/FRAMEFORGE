@@ -1336,7 +1336,7 @@ class FrameForge:
         self.w,self.h=cfg["w"],cfg["h"]
         self.zoom=1.0; self.pan_x=0; self.pan_y=0
         self.layer_frames=[[{"name":"Фон","image":Image.new("RGBA",(self.w,self.h),cfg["bg"]),"visible":True},{"name":"Рисунок","image":Image.new("RGBA",(self.w,self.h),(0,0,0,0)),"visible":True}]]; self.active_layer=1; self.frames=[None]; self.compose_frame(0)
-        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear(); self.continuity_tracks={}; self.continuity_track.set(""); self.dirty=True; self.selection_box=None
+        self.index=0; self.project=None; self.undo_stack.clear(); self.redo_stack.clear(); self.continuity_tracks={}; self.continuity_track.set(""); self.refresh_continuity(); self.dirty=True; self.selection_box=None
         self.canvas_info.config(text=f"{self.w} × {self.h}"); self.refresh(); self.render()
         self.refresh_layers(); self.status.set("Создан новый холст")
 
