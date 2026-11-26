@@ -75,8 +75,8 @@ def show_account_center(parent, store, on_change=None):
             user,code=store.create_account(reg_user.get(),reg_email.get(),reg_display.get(),reg_password.get())
             store.login(reg_user.get(),reg_password.get())
             messagebox.showinfo("Сохрани код восстановления",
-                "Аккаунт создан: "+user["display_name"]+"\\n\\nКод восстановления (показывается один раз):\\n"+code+
-                "\\n\\nСохрани его в надёжном месте. Отправка кода по email не настроена.",parent=win)
+                "Аккаунт создан: "+user["display_name"]+"\n\nКод восстановления (показывается один раз):\n"+code+
+                "\n\nСохрани его в надёжном месте. Отправка кода по email не настроена.",parent=win)
             finish()
         except AccountError as exc:
             messagebox.showerror("Регистрация FRAMEFORGE",str(exc),parent=win)
@@ -88,7 +88,7 @@ def show_account_center(parent, store, on_change=None):
     def recovery_action():
         try:
             code=store.reset_password(rec_email.get(),rec_code.get(),rec_password.get())
-            messagebox.showinfo("Пароль изменён","Пароль обновлён. Сохрани новый код восстановления:\\n\\n"+code,parent=win)
+            messagebox.showinfo("Пароль изменён","Пароль обновлён. Сохрани новый код восстановления:\n\n"+code,parent=win)
             finish()
         except AccountError as exc:
             messagebox.showerror("Восстановление пароля",str(exc),parent=win)
@@ -1435,14 +1435,14 @@ class FrameForge:
             if not os.path.isfile(path) or os.path.getsize(path)==0:
                 raise RuntimeError("Видео не было создано: выходной файл пуст.")
             self.status.set("Видео экспортировано: "+os.path.basename(path))
-            messagebox.showinfo(APP_NAME,f"Анимация экспортирована в {extension.upper()}.\\nКадров: {frame_count} · FPS: {fps}",parent=self.root)
+            messagebox.showinfo(APP_NAME,f"Анимация экспортирована в {extension.upper()}.\nКадров: {frame_count} · FPS: {fps}",parent=self.root)
         except Exception as exc:
             if proc is not None and proc.poll() is None:
                 try:
                     if proc.stdin:proc.stdin.close()
                 except Exception:pass
                 proc.kill();proc.wait()
-            messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\\n"+str(exc),parent=self.root)
+            messagebox.showerror(APP_NAME,"Не удалось экспортировать видео.\n"+str(exc),parent=self.root)
 
     def export_mp4(self):
         self.export_video("mp4","libx264",["-crf",str(self.user_settings.get("mp4_crf",18)),"-movflags","+faststart"])
