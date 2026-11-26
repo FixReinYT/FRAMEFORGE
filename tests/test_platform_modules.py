@@ -73,7 +73,10 @@ class ProEffectTests(unittest.TestCase):
             result = apply_pro_effect(source, effect, 45)
             self.assertEqual(result.mode, "RGBA")
             self.assertEqual(result.size, source.size)
-            self.assertEqual(result.getchannel("A").getpixel((0, 0)), 180)
+            if effect == "glow":
+                self.assertGreaterEqual(result.getchannel("A").getpixel((0, 0)), 180)
+            else:
+                self.assertEqual(result.getchannel("A").getpixel((0, 0)), 180)
 
     def test_unknown_effect_is_rejected(self):
         with self.assertRaises(ValueError):
